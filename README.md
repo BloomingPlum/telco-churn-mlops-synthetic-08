@@ -8,6 +8,9 @@ Deploys three microservices (ML inference, RAG retrieval, LLM Agent) to a
 > ⚠️ This guide targets **k3s on Ubuntu/Debian**.  
 > For minikube (macOS/Windows) see `k8s/scripts/deploy-minikube.sh`.
 
+> 📈 **Module 8 — Monitoring with Docker Compose + custom metric `HIGH_RISK_PREDICTIONS`:**
+> see [docs/MODULE8_MONITORING.md](docs/MODULE8_MONITORING.md). Short version: `make model && make up && make high-risk-demo`.
+
 
 ## Overview
 This repository provides a synthetic dataset generator for Telco Customer Churn prediction, along with a full MLOps pipeline. It includes tools for data generation with built-in data drift, model training, experiment tracking using MLflow, API serving with FastAPI, monitoring, and deployment. The dataset is entirely synthetic (no real customer data) and is inspired by the public Telco Customer Churn dataset on Kaggle, licensed under CC BY-NC-SA 4.0.
