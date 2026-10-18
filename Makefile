@@ -9,7 +9,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 help: ## Показати цю довідку
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 install: ## Створити віртуальне середовище та встановити основні залежності
 	python -m venv venv
@@ -118,3 +118,19 @@ docker-build-api: ## Build API Docker image
 docker-run-api: ## Run API Docker container
 	docker run -p 8000:8000 churn-api:latest
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Module 8: Monitoring & Observability (Docker Compose)
+# ──────────────────────────────────────────────────────────────────────────────
+include Makefile.monitoring
+
+.PHONY: model up down
+
+model: network-create ## Згенерувати дані + натренувати модель у Docker (ті самі версії бібліотек, що в API)
+	$(DC) $(COMPOSE_FILES) --profile train build generator trainer
+	$(DC) $(COMPOSE_FILES) --profile train run --rm generator
+	$(DC) $(COMPOSE_FILES) --profile train run --rm trainer
+
+up: monitoring-up ## Запустити API + MLflow + весь monitoring stack
+
+down: monitoring-down ## Зупинити все

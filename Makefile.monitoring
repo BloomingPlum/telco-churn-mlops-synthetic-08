@@ -8,6 +8,8 @@
 
 # ── Variables ────────────────────────────────────────────────
 COMPOSE_FILES = -f docker-compose.yml -f docker-compose.monitoring.yml
+# Compose v2 plugin ("docker compose"); override with DC=docker-compose for v1
+DC ?= docker compose
 PROMETHEUS_URL ?= http://localhost:9090
 GRAFANA_URL    ?= http://localhost:3000
 GRAFANA_PASS   ?= mlops_pass
@@ -16,7 +18,7 @@ GRAFANA_PASS   ?= mlops_pass
 .PHONY: monitoring-up monitoring-down monitoring-logs monitoring-ps
 
 monitoring-up: network-create          ## Start full monitoring stack
-	docker-compose $(COMPOSE_FILES) up -d
+	$(DC) $(COMPOSE_FILES) up -d --build
 	@echo ""
 	@echo "✅ Monitoring stack started:"
 	@echo "   Prometheus: $(PROMETHEUS_URL)"
@@ -25,13 +27,13 @@ monitoring-up: network-create          ## Start full monitoring stack
 	@echo "   Pushgw:     http://localhost:9091"
 
 monitoring-down:                       ## Stop monitoring stack
-	docker-compose $(COMPOSE_FILES) down
+	$(DC) $(COMPOSE_FILES) down
 
 monitoring-logs:                       ## Tail logs from monitoring services
-	docker-compose $(COMPOSE_FILES) logs -f prometheus grafana loki promtail alertmanager
+	$(DC) $(COMPOSE_FILES) logs -f prometheus grafana loki promtail alertmanager
 
 monitoring-ps:                         ## Show monitoring container status
-	docker-compose $(COMPOSE_FILES) ps
+	$(DC) $(COMPOSE_FILES) ps
 
 network-create:                        ## Create mlops-net if missing
 	docker network create mlops-net 2>/dev/null || true

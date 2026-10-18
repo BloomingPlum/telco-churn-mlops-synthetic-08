@@ -10,4 +10,6 @@ COPY models/ models/
 
 EXPOSE 8000
 
-CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-access-log: кожен запит уже логується MetricsMiddleware у JSON (для Loki),
+# текстовий access-лог uvicorn лише дублював би його і ламав `| json` у LogQL
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

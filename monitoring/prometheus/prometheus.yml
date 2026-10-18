@@ -72,15 +72,15 @@ scrape_configs:
           language: 'python'
 
   # ── 2. MLflow Tracking Server ─────────────────────────────
-  # ВИПРАВЛЕНО: mlflow не має /metrics endpoint
-  # Використовуємо / для перевірки що сервіс живий (up == 1)
-  # Метрика: up{job="mlflow"} — 1 якщо відповідає, 0 якщо ні
+  # mlflow server запущено з --expose-prometheus → метрики на /metrics.
+  # Target = ім'я сервісу 'mlflow': Docker DNS резолвить service/container name,
+  # але НЕ поле hostname (mlflow.int) → з 'mlflow.int:5000' target завжди DOWN.
   - job_name: 'mlflow'
     scrape_interval: 30s
     scrape_timeout:  10s
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['mlflow.int:5000']
+      - targets: ['mlflow:5000']
         labels:
           service: 'mlflow-tracking'
     #metric_relabel_configs:

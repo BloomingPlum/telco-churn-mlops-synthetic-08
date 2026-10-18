@@ -1,26 +1,53 @@
+# =============================================================================
+# docker-compose.yml — application services (API + MLflow)
+#
+# Monitoring lives in docker-compose.monitoring.yml (overlay). Run both:
+#   make up        # = docker network create mlops-net + compose up з обома файлами
+#   або вручну:
+#   docker network create mlops-net
+#   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d --build
+#
+# Data generation + training (profile "train", не стартують при звичайному up):
+#   make model     # = generator → trainer → models/churn_model.pkl + model_metrics.json
+# =============================================================================
 services:
-  # ── Сервіс для генерації даних
+  # ── Сервіс для генерації даних (profile: train)
   generator:
     build: .
+    profiles: ["train"]
     volumes:
       - ./data:/app/data
       - ./config:/app/config
     command: python src/generate_dataset_ext.py --samples 50000 --conv-samples 7500
     networks:
       - mlops-net
-    healthcheck:
-      test: ["CMD", "python", "-c", "print('healthy')"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 
+  # ── Тренування моделі (profile: train)
+  # Той самий образ, що й API → ті самі версії scikit-learn/numpy,
+  # тому pickle гарантовано завантажиться в API.
+  trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    profiles: ["train"]
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./pipelines:/app/pipelines:ro
+    environment:
+      - DATA_PATH=/app/data/telco_customers.csv
+      - MODEL_PATH=/app/models/churn_model.pkl
+      - MLFLOW_TRACKING_URI=        # порожньо → тренування без MLflow
+    command: python pipelines/train.py
+    networks:
+      - mlops-net
 
   # ── FastAPI prediction service
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
-    container_name: churn-api          # ← ДОДАНО: фіксоване ім'я для DNS резолюції
+    container_name: churn-api          # фіксоване ім'я для DNS (prometheus target churn-api:8000)
     ports:
       - "8000:8000"
     volumes:
@@ -29,233 +56,61 @@ services:
     depends_on:
       - mlflow
     environment:
-      # - MLFLOW_HTTP_REQUEST_ALLOW_LIST={"/metrics": ["GET"]}
-      # Або спробуйте дозволити всі хости для розробки:
-      - MLFLOW_SERVER_GUNICORN_OPTS=--forwarded-allow-ips="*"
       - MODEL_PATH=/app/models/churn_model.pkl
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      # Якщо MLflow ще не піднявся або моделі немає в registry — швидко
+      # переходимо на локальний models/churn_model.pkl (замість ~2 хв retry)
+      - MLFLOW_HTTP_REQUEST_MAX_RETRIES=1
+      - MLFLOW_HTTP_REQUEST_TIMEOUT=10
     networks:
       - mlops-net
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      # python:3.11-slim не має curl → перевіряємо через python
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 3
 
   # ── MLflow tracking server
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.11.3  # Остання перевірена версія
+    image: ghcr.io/mlflow/mlflow:v2.11.3
     container_name: mlflow
     hostname: mlflow.int
     ports:
         - "5000:5000"
     environment:
-      - MLFLOW_SERVER_ALLOWED_HOSTS=*    
+      - MLFLOW_SERVER_ALLOWED_HOSTS=*
     volumes:
       - ./mlartifacts:/mlartifacts
       - ./mlflow_db:/mlflow_db
-    #vuser: root
+    # sqlite://// (4 слеші) = абсолютний шлях /mlflow_db/mlflow.db у volume,
+    # не залежить від WORKDIR образу
     entrypoint: >
         /bin/sh -c "
         pip install prometheus-flask-exporter &&
-        mlflow server 
-        --backend-store-uri sqlite:///mlflow_db/mlflow.db 
-        --default-artifact-root /mlartifacts 
-        --host 0.0.0.0 
-        --port 5000 
+        mlflow server
+        --backend-store-uri sqlite:////mlflow_db/mlflow.db
+        --default-artifact-root /mlartifacts
+        --host 0.0.0.0
+        --port 5000
         --expose-prometheus /metrics"
     networks:
       - mlops-net
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=4)"]
       interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 60s
 
 
-# =============================================================================
-# docker-compose.monitoring.yml
-# Monitoring overlay for telco-churn-mlops-synthetic-07
-#
-# Usage:
-#   docker-compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
-#
-# Quick start:
-#   make monitoring-up       (add to Makefile, see below)
-#
-# Ports exposed:
-#   9090  → Prometheus
-#   3000  → Grafana        (admin / mlops_pass)
-#   3100  → Loki
-#   9080  → Promtail (internal)
-#   9093  → Alertmanager
-#   9100  → node-exporter
-#   8080  → cAdvisor
-#   9091  → Pushgateway    (for batch jobs / Airflow DAGs)
-# =============================================================================
-
-
-
-
-  # ── Prometheus ─────────────────────────────────────────────
-  prometheus:
-    image: prom/prometheus:v2.48.0
-    container_name: prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=30d'
-      - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
-    networks:
-      - mlops-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-
-  # ── Grafana ────────────────────────────────────────────────
-  grafana:
-    image: grafana/grafana:10.2.0
-    container_name: grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=mlops_pass
-      - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_AUTH_ANONYMOUS_ENABLED=false
-      - GF_INSTALL_PLUGINS=grafana-piechart-panel
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
-    networks:
-      - mlops-net
-    depends_on:
-      - prometheus
-      - loki
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-
-  # ── Loki ───────────────────────────────────────────────────
-  loki:
-    image: grafana/loki:2.9.2
-    container_name: loki
-    ports:
-      - "3100:3100"
-    volumes:
-      - ./monitoring/loki/config.yml:/etc/loki/local-config.yaml:ro
-      - loki_data:/loki
-    command: -config.file=/etc/loki/local-config.yaml
-    networks:
-      - mlops-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3100/ready"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-
-  # ── Promtail ───────────────────────────────────────────────
-  promtail:
-    image: grafana/promtail:2.9.2
-    container_name: promtail
-    volumes:
-      - /var/log:/var/log:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./monitoring/promtail/config.yml:/etc/promtail/config.yml:ro
-    command: -config.file=/etc/promtail/config.yml
-    networks:
-      - mlops-net
-    depends_on:
-      - loki
-    restart: unless-stopped
-
-  # ── Alertmanager ───────────────────────────────────────────
-  alertmanager:
-    image: prom/alertmanager:v0.26.0
-    container_name: alertmanager
-    ports:
-      - "9093:9093"
-    volumes:
-      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      - alertmanager_data:/alertmanager
-    command:
-      - '--config.file=/etc/alertmanager/alertmanager.yml'
-      - '--storage.path=/alertmanager'
-    networks:
-      - mlops-net
-    restart: unless-stopped
-
-  # ── Node Exporter ──────────────────────────────────────────
-  node-exporter:
-    image: prom/node-exporter:v1.7.0
-    container_name: node-exporter
-    ports:
-      - "9100:9100"
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--path.rootfs=/rootfs'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
-    networks:
-      - mlops-net
-    restart: unless-stopped
-
-  # ── cAdvisor ───────────────────────────────────────────────
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.47.2
-    container_name: cadvisor
-    ports:
-      - "8080:8080"
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-    privileged: true
-    networks:
-      - mlops-net
-    restart: unless-stopped
-
-  # ── Pushgateway ────────────────────────────────────────────
-  pushgateway:
-    image: prom/pushgateway:v1.7.0
-    container_name: pushgateway
-    ports:
-      - "9091:9091"
-    networks:
-      - mlops-net
-    restart: unless-stopped
-
-volumes:
-  prometheus_data:
-  grafana_data:
-  loki_data:
-  alertmanager_data:
-
-
-# ── Явна мережа — не залежить від назви папки
+# ── Явна мережа — не залежить від назви папки.
+# external: true в обох compose-файлах → однакове визначення при merge і
+# жодних конфліктів міток compose. Створюється один раз:
+#   docker network create mlops-net      (make up / make model роблять це самі)
 networks:
   mlops-net:
-    driver: bridge
+    external: true
     name: mlops-net
-    # external: true
