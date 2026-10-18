@@ -7,6 +7,8 @@ available or not configured.
 
 import os
 import sys
+import json
+from datetime import datetime, timezone
 import pandas as pd
 import joblib
 from sklearn.model_selection import train_test_split
@@ -14,7 +16,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
 # Optional progress bar
 try:
@@ -27,6 +29,25 @@ except Exception:
 # Paths (can be overridden with env vars)
 DATA_PATH = os.getenv('DATA_PATH', 'data/telco_customers.csv')
 MODEL_PATH = os.getenv('MODEL_PATH', 'models/churn_model.pkl')
+# Evaluation metrics are saved next to the model; the API reads them at startup
+# and exposes them as model_accuracy / model_f1_score / model_auc_roc gauges.
+METRICS_PATH = os.getenv('METRICS_PATH', os.path.join(os.path.dirname(MODEL_PATH) or 'models', 'model_metrics.json'))
+MODEL_VERSION = os.getenv('MODEL_VERSION', 'v1.0-local')
+
+# Exactly the fields accepted by the API (src/api/models.py -> CustomerFeatures).
+# The generated CSV also contains customerID and RecordDate; if those reach the
+# pipeline, every /predict call fails with "columns are missing: {'RecordDate'}".
+FEATURES = [
+	'tenure', 'MonthlyCharges', 'TotalCharges', 'gender', 'SeniorCitizen',
+	'Partner', 'Dependents', 'PhoneService', 'MultipleLines', 'InternetService',
+	'OnlineSecurity', 'OnlineBackup', 'DeviceProtection', 'TechSupport',
+	'StreamingTV', 'StreamingMovies', 'Contract', 'PaperlessBilling', 'PaymentMethod',
+]
+
+# Depth-limited forest: an unlimited RandomForest on 50k rows overfits
+# (accuracy ~0.65) and pickles to ~190 MB, over GitHub's 100 MB file limit.
+# These settings give ~0.68 accuracy and a ~2.5 MB (compressed) model file.
+RF_PARAMS = {'n_estimators': 100, 'max_depth': 10, 'min_samples_leaf': 10, 'random_state': 42}
 
 # MLflow configuration via environment variables (optional)
 MLFLOW_TRACKING_URI = os.getenv('MLFLOW_TRACKING_URI', '').strip()
@@ -73,10 +94,39 @@ def build_pipeline(X: pd.DataFrame) -> Pipeline:
 
 	model = Pipeline(steps=[
 		('preprocessor', preprocessor),
-		('classifier', RandomForestClassifier(n_estimators=100, random_state=42))
+		# n_jobs stays at 1: the API predicts one row per request, and a parallel
+		# forest spends more time on thread start-up than on the 100 trees.
+		('classifier', RandomForestClassifier(**RF_PARAMS))
 	])
 
 	return model
+
+
+def compute_metrics(model: Pipeline, X_test, y_test) -> dict:
+	proba = model.predict_proba(X_test)[:, 1]
+	pred = (proba >= 0.5).astype(int)
+	return {
+		'accuracy': round(float(accuracy_score(y_test, pred)), 4),
+		'f1': round(float(f1_score(y_test, pred)), 4),
+		'roc_auc': round(float(roc_auc_score(y_test, proba)), 4),
+		'high_risk_share': round(float((proba > 0.8).mean()), 4),
+	}
+
+
+def save_metrics(metrics: dict, n_train: int, n_test: int) -> None:
+	payload = {
+		'model_version': MODEL_VERSION,
+		'trained_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+		'n_train': int(n_train),
+		'n_test': int(n_test),
+		'params': RF_PARAMS,
+		'features': FEATURES,
+		**metrics,
+	}
+	os.makedirs(os.path.dirname(METRICS_PATH) or 'models', exist_ok=True)
+	with open(METRICS_PATH, 'w') as f:
+		json.dump(payload, f, indent=2)
+	print(f'Metrics saved to {METRICS_PATH}: {metrics}')
 
 
 def train_and_evaluate(model: Pipeline, X_train, X_test, y_train, y_test, show_progress: bool = True):
@@ -141,12 +191,18 @@ def main():
 		print('Error: target column "Churn" not found in data', file=sys.stderr)
 		sys.exit(2)
 
-	X = df.drop('Churn', axis=1)
+	missing = [c for c in FEATURES if c not in df.columns]
+	if missing:
+		print(f'Error: feature columns missing from data: {missing}', file=sys.stderr)
+		sys.exit(2)
+
+	X = df[FEATURES]
 	y = df['Churn'].map({'Yes': 1, 'No': 0})
 
 	model = build_pipeline(X)
 
-	X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+	X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+	metrics = None
 
 	# If MLflow is available and a tracking URI was provided, attempt to log there.
 	if MLFLOW_AVAILABLE and MLFLOW_TRACKING_URI:
@@ -159,16 +215,16 @@ def main():
 	if MLFLOW_AVAILABLE and MLFLOW_TRACKING_URI:
 		try:
 			with mlflow.start_run():
-				params = {'n_estimators': 100, 'random_state': 42}
 				try:
-					mlflow.log_params(params)
+					mlflow.log_params(RF_PARAMS)
 				except Exception:
 					pass
 
 				acc, model = train_and_evaluate(model, X_train, X_test, y_train, y_test, show_progress=True)
 				print(f'Accuracy: {acc:.4f}')
+				metrics = compute_metrics(model, X_test, y_test)
 				try:
-					mlflow.log_metric('accuracy', float(acc))
+					mlflow.log_metrics(metrics)
 				except Exception:
 					pass
 
@@ -181,6 +237,7 @@ def main():
 					print(f'Warning: failed to log/register model to MLflow: {e}')
 		except Exception as e:
 			print(f'Warning: mlflow run failed ({e}), training locally instead')
+			metrics = None
 			acc, model = train_and_evaluate(model, X_train, X_test, y_train, y_test, show_progress=False)
 			print(f'Accuracy (local): {acc:.4f}')
 	else:
@@ -188,10 +245,13 @@ def main():
 		acc, model = train_and_evaluate(model, X_train, X_test, y_train, y_test, show_progress=True)
 		print(f'Accuracy (no mlflow): {acc:.4f}')
 
-	# Always save local model
+	# Always save local model + its evaluation metrics
 	os.makedirs(os.path.dirname(MODEL_PATH) or 'models', exist_ok=True)
-	joblib.dump(model, MODEL_PATH)
+	joblib.dump(model, MODEL_PATH, compress=3)
 	print(f'Model saved to {MODEL_PATH}')
+	if metrics is None:
+		metrics = compute_metrics(model, X_test, y_test)
+	save_metrics(metrics, len(X_train), len(X_test))
 
 
 if __name__ == '__main__':

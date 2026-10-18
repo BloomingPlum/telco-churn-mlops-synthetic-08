@@ -1,0 +1,37 @@
+{
+  "model_version": "v1.0-local",
+  "trained_at": "2026-10-11T09:26:16+00:00",
+  "n_train": 40000,
+  "n_test": 10000,
+  "params": {
+    "n_estimators": 100,
+    "max_depth": 10,
+    "min_samples_leaf": 10,
+    "random_state": 42
+  },
+  "features": [
+    "tenure",
+    "MonthlyCharges",
+    "TotalCharges",
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod"
+  ],
+  "accuracy": 0.6843,
+  "f1": 0.7276,
+  "roc_auc": 0.7362,
+  "high_risk_share": 0.1292
+}
