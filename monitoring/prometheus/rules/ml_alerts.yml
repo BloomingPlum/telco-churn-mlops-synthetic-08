@@ -226,3 +226,28 @@ groups:
         annotations:
           summary:     "Model training took > 1 hour"
           description: "Duration = {{ $value | humanizeDuration }}. Check for data size issues."
+
+  # ════════════════════════════════════════════════════════
+  # GROUP 6: Business risk — custom metric HIGH_RISK_PREDICTIONS
+  # high_risk_predictions_total = predictions with churn_probability > 0.8
+  # Baseline on the test set: ~13% of predictions are high risk.
+  # ════════════════════════════════════════════════════════
+  - name: business_risk
+    rules:
+
+      - alert: HighRiskPredictionsSpike
+        expr: |
+          sum(rate(high_risk_predictions_total[10m]))
+          /
+          sum(rate(predictions_total{outcome!="error"}[10m]))
+          > 0.25
+        for: 5m
+        labels:
+          severity: warning
+          team:     ml-platform
+        annotations:
+          summary:     "High-risk churn predictions > 25% of traffic"
+          description: |
+            {{ $value | humanizePercentage }} of predictions in the last 10 minutes have
+            churn probability > 0.8 (baseline ~13%). Either the customer base really
+            shifted (notify retention) or the model is drifting (check feature_drift_score).

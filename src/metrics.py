@@ -101,6 +101,22 @@ PREDICTION_CONFIDENCE = Histogram(
     buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
 )
 
+# ── Custom business metric: high-risk customers ──────────────────
+# A prediction is "high risk" when churn_probability > HIGH_RISK_THRESHOLD.
+# These are the customers retention should call first, so the business
+# wants to see how many there are and how that number moves over time.
+HIGH_RISK_THRESHOLD = 0.8
+
+HIGH_RISK_PREDICTIONS = Counter(
+    "high_risk_predictions_total",
+    f"Predictions with churn probability > {HIGH_RISK_THRESHOLD}",
+    ["model_version", "contract_type"],
+    # contract_type: Month-to-month | One year | Two year | Other  (low cardinality)
+    # Usage: if prob > HIGH_RISK_THRESHOLD: HIGH_RISK_PREDICTIONS.labels(v, ct).inc()
+    # PromQL share of high-risk: sum(rate(high_risk_predictions_total[5m]))
+    #                           / sum(rate(predictions_total{outcome!="error"}[5m]))
+)
+
 # ═══════════════════════════════════════════════════════════════
 # DATA QUALITY & DRIFT
 # (updated by monitoring/drift_exporter.py via Pushgateway)

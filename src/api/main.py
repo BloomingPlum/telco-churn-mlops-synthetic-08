@@ -22,6 +22,8 @@ from src.metrics import (
     ACTIVE_MODEL_VERSION,
     NULL_FEATURES_TOTAL,
     PREDICTION_CONFIDENCE,
+    HIGH_RISK_PREDICTIONS,
+    HIGH_RISK_THRESHOLD,
     MODEL_ACCURACY,
     MODEL_F1_SCORE,
     MODEL_AUC_ROC,
@@ -179,8 +181,9 @@ async def startup_event():
 
     # Створити серії лічильників зі значенням 0 одразу при старті: rate()/increase()
     # не бачать перше значення нової серії, тож без цього прогнози до першого
-    # scrape "губляться", і панелі = No data.
+    # scrape "губляться" (а high-risk share рахувався б неправильно), і панелі = No data.
     for contract in KNOWN_CONTRACTS:
+        HIGH_RISK_PREDICTIONS.labels(model_version=MODEL_VERSION, contract_type=contract)
         for outcome in ("churn", "no_churn", "error"):
             PREDICTIONS_TOTAL.labels(model_version=MODEL_VERSION, outcome=outcome, contract_type=contract)
 
@@ -240,6 +243,20 @@ def predict(features: CustomerFeatures):
             model_version=MODEL_VERSION,
             outcome=outcome,
         ).observe(churn_prob)
+
+        # Кастомна метрика: клієнти з високим ризиком відтоку (p > 0.8)
+        if churn_prob > HIGH_RISK_THRESHOLD:
+            HIGH_RISK_PREDICTIONS.labels(
+                model_version=MODEL_VERSION,
+                contract_type=contract_type,
+            ).inc()
+            logger.info("High-risk customer detected", extra={
+                "endpoint": "/predict",
+                "outcome": outcome,
+                "churn_probability": churn_prob,
+                "contract_type": contract_type,
+                "model_version": MODEL_VERSION,
+            })
 
         return PredictionResponse(
             churn_probability=churn_prob,

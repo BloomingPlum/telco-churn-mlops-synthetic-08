@@ -78,6 +78,20 @@ groups:
             rate(api_requests_total[5m])
           )
 
+      # Custom metric: high-risk predictions (p > 0.8) per second, by contract
+      - record: job:high_risk_predictions:rate5m
+        expr: |
+          sum by (model_version, contract_type) (
+            rate(high_risk_predictions_total[5m])
+          )
+
+      # Custom metric: share of successful predictions that are high risk (0-1)
+      - record: job:high_risk_predictions:ratio5m
+        expr: |
+          sum(rate(high_risk_predictions_total[5m]))
+          /
+          sum(rate(predictions_total{outcome!="error"}[5m]))
+
   # ── Resource recordings ──────────────────────────────────
   - name: resource_recordings
     interval: 2m

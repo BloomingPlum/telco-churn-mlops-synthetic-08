@@ -124,7 +124,7 @@ docker-run-api: ## Run API Docker container
 # ──────────────────────────────────────────────────────────────────────────────
 include Makefile.monitoring
 
-.PHONY: model up down
+.PHONY: model up down high-risk-demo test-high-risk
 
 model: network-create ## Згенерувати дані + натренувати модель у Docker (ті самі версії бібліотек, що в API)
 	$(DC) $(COMPOSE_FILES) --profile train build generator trainer
@@ -134,3 +134,9 @@ model: network-create ## Згенерувати дані + натренуват�
 up: monitoring-up ## Запустити API + MLflow + весь monitoring stack
 
 down: monitoring-down ## Зупинити все
+
+high-risk-demo: ## Надіслати high-risk/low-risk запити і показати HIGH_RISK_PREDICTIONS
+	python3 scripts/high_risk_demo.py
+
+test-high-risk: ## Unit-тести кастомної метрики (без Docker)
+	MLFLOW_TRACKING_URI= pytest tests/test_high_risk_metric.py -v
