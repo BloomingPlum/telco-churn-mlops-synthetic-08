@@ -1,22 +1,4 @@
 {
-  "__inputs": [
-    {
-      "name": "DS_PROMETHEUS",
-      "label": "Prometheus",
-      "description": "",
-      "type": "datasource",
-      "pluginId": "prometheus",
-      "pluginName": "Prometheus"
-    },
-    {
-      "name": "DS_LOKI",
-      "label": "Loki",
-      "description": "",
-      "type": "datasource",
-      "pluginId": "loki",
-      "pluginName": "Loki"
-    }
-  ],
   "__requires": [
     { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
     { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
@@ -40,7 +22,7 @@
         "type": "dashboard"
       },
       {
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
         "enable": true,
         "expr": "changes(active_model_version_info[5m]) > 0",
         "hide": false,
@@ -66,7 +48,7 @@
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -87,7 +69,7 @@
       "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "sum(rate(predictions_total[5m])) * 60",
           "legendFormat": "req/min",
           "refId": "A"
@@ -97,7 +79,7 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -120,7 +102,7 @@
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "sum(rate(predictions_total{outcome=\"error\"}[5m])) / sum(rate(predictions_total[5m])) * 100",
           "legendFormat": "error %",
           "refId": "A"
@@ -130,7 +112,7 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -153,7 +135,7 @@
       "options": { "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "model_accuracy{model_version=~\"$model_version\"}",
           "legendFormat": "accuracy",
           "refId": "A"
@@ -163,7 +145,7 @@
       "type": "gauge"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -184,7 +166,7 @@
       "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "histogram_quantile(0.99, sum(rate(prediction_latency_seconds_bucket{model_version=~\"$model_version\"}[5m])) by (le))",
           "legendFormat": "p99",
           "refId": "A"
@@ -194,7 +176,7 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -216,7 +198,7 @@
       "options": { "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "job:model_health:composite_score",
           "legendFormat": "health",
           "refId": "A"
@@ -226,7 +208,7 @@
       "type": "gauge"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -245,7 +227,7 @@
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value_and_name" },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "up{job=\"churn-api\"}",
           "legendFormat": "{{job}}",
           "refId": "A"
@@ -256,13 +238,13 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
       "id": 101,
       "title": "📈 Predictions & Latency",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2 }, "unit": "reqps" },
         "overrides": [
@@ -271,12 +253,12 @@
           { "matcher": { "id": "byName", "options": "no_churn" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] }
         ]
       },
-      "gridPos": { "h": 8, "w": 14, "x": 0, "y": 6 },
+      "gridPos": { "h": 8, "w": 14, "x": 0, "y": 15 },
       "id": 10,
       "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "sum by (outcome) (rate(predictions_total{model_version=~\"$model_version\"}[5m]))",
           "legendFormat": "{{outcome}}",
           "refId": "A"
@@ -286,22 +268,22 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2 }, "unit": "s" }
       },
-      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 6 },
+      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 15 },
       "id": 11,
       "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "histogram_quantile(0.99, sum by (le, model_version) (rate(prediction_latency_seconds_bucket{model_version=~\"$model_version\"}[5m])))",
           "legendFormat": "p99 {{model_version}}",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "histogram_quantile(0.50, sum by (le, model_version) (rate(prediction_latency_seconds_bucket{model_version=~\"$model_version\"}[5m])))",
           "legendFormat": "p50 {{model_version}}",
           "refId": "B"
@@ -312,29 +294,29 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
       "id": 102,
       "title": "🎯 Model Quality & Drift",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2 }, "unit": "percentunit", "min": 0, "max": 1 },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 15 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
       "id": 20,
       "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "model_accuracy{model_version=~\"$model_version\"}",
           "legendFormat": "accuracy {{model_version}}",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "model_f1_score{model_version=~\"$model_version\"}",
           "legendFormat": "F1 {{model_version}}",
           "refId": "B"
@@ -344,7 +326,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -362,12 +344,12 @@
           "max": 1
         }
       },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 15 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
       "id": 21,
       "options": { "displayMode": "gradient", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] }, "showUnfilled": true },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "feature_drift_score{model_version=~\"$model_version\"}",
           "legendFormat": "{{feature_name}}",
           "refId": "A"
@@ -377,16 +359,16 @@
       "type": "bargauge"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "lineWidth": 2 }, "unit": "percentunit", "min": 0, "max": 1 }
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 15 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
       "id": 22,
       "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "job:predicted_churn_rate:1h",
           "legendFormat": "churn rate (1h rolling)",
           "refId": "A"
@@ -397,20 +379,20 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
       "id": 103,
       "title": "📊 Prediction Distribution",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": {} } },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 33 },
       "id": 30,
       "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["percent"] }, "pieType": "pie", "tooltip": { "mode": "single" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "sum by (outcome) (increase(predictions_total{model_version=~\"$model_version\"}[$__range]))",
           "legendFormat": "{{outcome}}",
           "refId": "A"
@@ -420,14 +402,14 @@
       "type": "piechart"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": {} } },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 33 },
       "id": 31,
       "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["percent"] }, "pieType": "donut", "tooltip": { "mode": "single" } },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "sum by (contract_type) (increase(predictions_total{model_version=~\"$model_version\"}[$__range]))",
           "legendFormat": "{{contract_type}}",
           "refId": "A"
@@ -437,16 +419,16 @@
       "type": "piechart"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
       "fieldConfig": {
         "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.05 }, { "color": "red", "value": 0.1 }] }, "unit": "short", "min": 0 }
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 33 },
       "id": 32,
       "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] }, "showUnfilled": true },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
           "expr": "sum by (feature_name) (increase(null_features_total[$__range]))",
           "legendFormat": "{{feature_name}}",
           "refId": "A"
@@ -457,25 +439,128 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 },
       "id": 104,
       "title": "📋 Recent Logs",
       "type": "row"
     },
     {
-      "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 33 },
+      "datasource": { "type": "loki", "uid": "loki_telco" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 42 },
       "id": 40,
       "options": { "dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
+          "datasource": { "type": "loki", "uid": "loki_telco" },
           "expr": "{job=\"churn-api\"} | json | level=~\"ERROR|WARNING\"",
           "legendFormat": "",
           "refId": "A"
         }
       ],
       "title": "Recent Errors & Warnings",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 105,
+      "title": "🚨 High-Risk Customers (churn probability > 0.8) — custom metric",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
+      "description": "Number of predictions with churn_probability > 0.8 in the selected time range (high_risk_predictions_total).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "orange", "value": null } ] },
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 4, "x": 0, "y": 6 },
+      "id": 50,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
+          "expr": "sum(increase(high_risk_predictions_total{model_version=~\"$model_version\"}[$__range]))",
+          "legendFormat": "high-risk",
+          "refId": "A"
+        }
+      ],
+      "title": "High-Risk Predictions (time range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
+      "description": "Share of successful predictions that are high risk. Baseline on the test set ≈ 13%; alert HighRiskPredictionsSpike fires above 25%.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.15 }, { "color": "red", "value": 0.25 } ] },
+          "unit": "percentunit",
+          "max": 1,
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 4, "x": 4, "y": 6 },
+      "id": 51,
+      "options": { "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
+          "expr": "sum(rate(high_risk_predictions_total{model_version=~\"$model_version\"}[5m])) / sum(rate(predictions_total{model_version=~\"$model_version\", outcome!=\"error\"}[5m]))",
+          "legendFormat": "high-risk share",
+          "refId": "A"
+        }
+      ],
+      "title": "High-Risk Share (5m)",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
+      "description": "High-risk predictions per minute, split by contract type.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2, "fillOpacity": 15, "stacking": { "mode": "normal", "group": "A" } },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
+      "id": 52,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
+          "expr": "sum by (contract_type) (rate(high_risk_predictions_total{model_version=~\"$model_version\"}[5m])) * 60",
+          "legendFormat": "{{contract_type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "High-Risk Predictions / min by Contract",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki_telco" },
+      "description": "Log line written by /predict for every high-risk prediction (JSON → Loki).",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 6 },
+      "id": 53,
+      "options": { "dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki_telco" },
+          "expr": "{job=\"churn-api\"} |= \"High-risk customer detected\" | json | line_format \"p={{.churn_probability}}  contract={{.contract_type}}  model={{.model_version}}\"",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "High-Risk Customers — log stream",
       "type": "logs"
     }
   ],
@@ -486,7 +571,7 @@
     "list": [
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "datasource": { "type": "prometheus", "uid": "prometheus_telco" },
         "definition": "label_values(predictions_total, model_version)",
         "hide": 0,
         "includeAll": true,
