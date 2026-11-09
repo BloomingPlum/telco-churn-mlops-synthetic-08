@@ -42,8 +42,13 @@ check-env:
 build:
 	$(COMPOSE_THEME9) build lab-setup
 
+## docker-compose.yml (тема 8) оголошує мережу mlops-net як external —
+## її треба створити один раз перед будь-яким `compose up/run`.
+network:
+	@docker network create mlops-net >/dev/null 2>&1 || true
+
 ## Запустити MLflow (потрібен для всіх лаб)
-mlflow-up:
+mlflow-up: network
 	$(COMPOSE_BASE) up -d mlflow
 	@echo "⏳ Чекаємо MLflow..."
 	@sleep 5
@@ -54,7 +59,7 @@ mlflow-up:
 # ─────────────────────────────────────────────────────────────────
 
 ## Підняти сервіс Ollama (без завантаження моделі)
-ollama-up:
+ollama-up: network
 	$(COMPOSE_THEME9) --profile ollama up -d ollama
 	@echo "⏳ Чекаємо Ollama..."
 	@sleep 3
@@ -78,7 +83,7 @@ ollama-check:
 ## Згенерувати data/telco_customers.csv (з основного репо теми 8),
 ## якщо його ще немає — файл гітований у .gitignore, тому в чистому
 ## клоні репозиторію його НЕМАЄ і треба згенерувати самостійно.
-generate-data:
+generate-data: network
 	@if [ -f data/telco_customers.csv ]; then \
 		echo "✅ data/telco_customers.csv вже існує ($$(wc -l < data/telco_customers.csv) рядків)"; \
 	else \
@@ -88,30 +93,22 @@ generate-data:
 	fi
 
 ## Натренувати churn_model.pkl на щойно згенерованих даних.
-## Спочатку пробуємо локальний python3 (яка версія scikit-learn вже
-## стоїть — та й буде використана). Якщо не вийшло (немає sklearn
-## локально) — падаємо назад на разовий Docker-контейнер із
-## scikit-learn==1.7.2 (та сама версія, що зашита в
-## docker/Dockerfile.labs — щоб pickle-формат завжди збігався
-## з тим, що читають лаби).
-## ВАЖЛИВО: якщо models/churn_model.pkl вже є в репо, але не
-## завантажується (MemoryError / UnpicklingError при joblib.load) —
-## файл пошкоджений (типова причина: бінарний файл був закомічений
-## з автоконвертацією рядків на Windows). У такому разі видали його
-## і перетренуй:  rm models/churn_model.pkl && make -f Makefile.theme9 train-model
+## Тренування йде в сервісі `trainer` (образ Dockerfile.api) — там ті самі
+## scikit-learn==1.7.2 і numpy<2, що й у docker/Dockerfile.labs. Тому один і
+## той самий pickle вантажать і лаби теми 9, і API теми 8, а на самій VM
+## не потрібні ні venv, ні scikit-learn. Локальний python3 НЕ використовується:
+## інша версія sklearn/numpy дала б pickle, який лаби або API не завантажать
+## (_RemainderColsList / numpy._core).
 train-model: generate-data
 	@echo "🎓 Тренуємо churn_model.pkl (RandomForest, ColumnTransformer)..."
-	@python3 pipelines/train.py || \
-	 docker run --rm -v $(PWD):/app -w /app python:3.11-slim \
-	   sh -c "pip install --quiet scikit-learn==1.7.2 pandas joblib mlflow && python pipelines/train.py"
+	$(COMPOSE_BASE) --profile train run --rm --build trainer
 	@echo "✅ models/churn_model.pkl готовий"
 
-## Перевірити, що модель і дані валідні (антидот від "MemoryError при joblib.load")
-## Логіка в scripts/theme9_verify_artifacts.py — НЕ inline python3 -c,
-## бо try/except неможливо коректно записати одним "склеєним" рядком
-## (саме це і спричиняло SyntaxError у попередній версії цього таргету).
-verify-artifacts:
-	@python3 scripts/theme9_verify_artifacts.py
+## Перевірити, що модель і дані валідні — у тому ж образі `trainer`,
+## тобто з тими самими версіями, якими модель тренувалась.
+verify-artifacts: network
+	@$(COMPOSE_BASE) --profile train run --rm --build --no-deps \
+	  -v $(CURDIR)/scripts:/app/scripts:ro trainer python scripts/theme9_verify_artifacts.py
 
 # ─────────────────────────────────────────────────────────────────
 # SETUP: Генерація churn_explanations.json (один раз до заняття)
@@ -286,7 +283,7 @@ help:
 	@echo "═══════════════════════════════════════════════════"
 	@echo ""
 
-.PHONY: init check-env build mlflow-up generate-data train-model verify-artifacts \
+.PHONY: network init check-env build mlflow-up generate-data train-model verify-artifacts \
         ollama-up ollama-pull ollama-check \
         setup-data check-data \
         theme9-part-a lab-a1 lab-a2 lab-a2-drift \

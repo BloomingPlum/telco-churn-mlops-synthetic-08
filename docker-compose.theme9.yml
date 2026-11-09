@@ -87,18 +87,10 @@ services:
     profiles:
       - ollama-setup     # запускається тільки явно, не піднімається разом з labs
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # Override healthcheck для mlflow з базового docker-compose.yml
-  # (curl не гарантовано присутній в офіційному образі mlflow)
-  # ──────────────────────────────────────────────────────────────────────────
-  mlflow:
-    healthcheck:
-      test: ["CMD", "python3", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
-      interval: 15s
-      timeout: 5s
-      retries: 8
-      start_period: 20s
+  # (Override healthcheck для mlflow прибрано: docker-compose.yml уже перевіряє
+  #  MLflow через python urllib на /health. Два різні визначення змушували б
+  #  compose перестворювати контейнер mlflow при кожному перемиканні між
+  #  командами теми 8 і теми 9.)
 
   # ──────────────────────────────────────────────────────────────────────────
   # LAB-SETUP: Підготовка даних для теми 9

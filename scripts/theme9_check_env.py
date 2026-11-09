@@ -8,7 +8,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    # python-dotenv є лише в Docker-образі лаб; на самій VM його може не бути.
+    # Цій перевірці досить простих рядків KEY=VALUE — читаємо їх самі.
+    def load_dotenv(path):
+        path = Path(path)
+        if not path.exists():
+            return False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[len("export "):]
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            val = val.split(" #", 1)[0].strip().strip('"').strip("'")
+            os.environ.setdefault(key.strip(), val)
+        return True
+
 load_dotenv(ROOT / ".env.theme9")
 
 provider = os.getenv("LLM_PROVIDER", "anthropic").lower()
