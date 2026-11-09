@@ -1,0 +1,53 @@
+# requirements-theme9.txt
+# Додаткові залежності для Теми 9 (LLM Evaluation)
+#
+# ЗМІНА: більше НЕ вимагає OPENAI_API_KEY.
+# LLM_PROVIDER в .env.theme9 обирає, який провайдер використовується
+# для генерації пояснень, LLM-судді та RAGAS:
+#   anthropic (платно, дешево) | gemini (безкоштовно) | groq (безкоштовно)
+#   | ollama (100% офлайн, без ключа — потрібен лише Docker-сервіс ollama)
+#
+# `openai` пакет тут потрібен лише як HTTP-клієнт для Groq
+# (Groq має OpenAI-сумісний endpoint) — жодного OpenAI-акаунту не треба.
+
+# ── LLM Evaluation ────────────────────────────────────────────────
+ragas==0.1.14
+datasets==2.20.0
+
+# ── LLM провайдери (без OpenAI-акаунту) ───────────────────────────
+# ВАЖЛИВО: усі пакети нижче навмисно тримаються в "старій" екосистемі
+# langchain-core<0.3, бо ragas==0.1.14 був написаний під неї, а
+# новіші langchain-ollama/langchain-google-genai (>=0.2 / >=2.0)
+# вимагають langchain-core>=0.3 — і резолвер pip падає з
+# ResolutionImpossible, якщо змішати обидві екосистеми в одному
+# requirements-файлі. Ця комбінація версій ПЕРЕВІРЕНА повним
+# `pip install --dry-run` резолвінгом усього файлу разом.
+anthropic>=0.30.0,<1.0
+langchain-anthropic>=0.1.20,<0.2
+
+# google-generativeai підтягується транзитивно через
+# langchain-google-genai (версія 0.7.x) — не пінуємо напряму.
+langchain-google-genai>=1.0.8,<1.1
+
+openai>=1.35.0,<2.0                 # HTTP-клієнт для Groq (OpenAI-сумісний API)
+langchain-groq>=0.1.9,<0.2
+
+ollama>=0.3.0,<0.4                  # прямий клієнт (llm_client.py, без ключа)
+langchain-ollama>=0.1.3,<0.2        # обгортка для RAGAS (LLM + embeddings)
+
+# ── LangChain (загальні шари для RAGAS-обгортки) ──────────────────
+langchain>=0.2.9,<0.3
+langchain-community>=0.2.9,<0.3     # HuggingFaceEmbeddings (для RAGAS, без API-ключа)
+sentence-transformers>=3.0.0,<4.0   # локальна embeddings-модель
+
+# ── LangSmith (опційно, безкоштовний free tier) ───────────────────
+langsmith>=0.1.83,<0.2
+
+# ── Візуалізація ───────────────────────────────────────────────────
+matplotlib>=3.8.0,<4.0
+seaborn>=0.13.0,<0.14
+
+# ── Utils ─────────────────────────────────────────────────────────
+python-dotenv>=1.0.1
+httpx>=0.27.0,<1.0
+tqdm>=4.66.0

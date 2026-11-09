@@ -1,0 +1,295 @@
+# Makefile — Тема 9: AI Evaluation Labs
+# Використання: make -f Makefile.theme9 <target>
+
+COMPOSE_BASE  = docker compose -f docker-compose.yml
+COMPOSE_THEME9 = $(COMPOSE_BASE) -f docker-compose.theme9.yml
+
+# ─────────────────────────────────────────────────────────────────
+# SETUP
+# ─────────────────────────────────────────────────────────────────
+
+## Перший запуск: скопіювати .env та підняти всі сервіси
+init:
+	@if [ ! -f .env.theme9 ]; then \
+		cp .env.theme9.example .env.theme9; \
+		echo "📝 Створено .env.theme9 — обери LLM_PROVIDER і заповни ОДИН ключ!"; \
+	else \
+		echo "✅ .env.theme9 вже існує"; \
+	fi
+	@mkdir -p results data models labs/setup labs/part_a labs/part_b labs/common docker scripts
+
+## Перевірити, що ключ для обраного LLM_PROVIDER заповнений
+## (ФІКС: раніше перевіряло 3 фіксовані змінні включно з OPENAI_API_KEY,
+##  навіть якщо провайдер обраний інший — тепер перевіряє лише
+##  той ключ, що відповідає LLM_PROVIDER; ollama взагалі без ключа.
+##  Логіка винесена в scripts/theme9_check_env.py — see history-fix note там,
+##  чому це НЕ можна робити одним "склеєним" рядком python3 -c "...").
+check-env:
+	@python3 scripts/theme9_check_env.py
+	@if [ "$$(grep -E '^LLM_PROVIDER=ollama' .env.theme9 2>/dev/null)" ]; then \
+		$(MAKE) -f Makefile.theme9 ollama-check; \
+	fi
+
+## Зібрати Docker образ для лабораторних сервісів.
+## ВАЖЛИВО: усі 7 сервісів (lab-setup, lab-a1, lab-a2, lab-a2-drift,
+## lab-b1, lab-b1-fast, lab-b2) тепер ділять ОДИН і той самий image-тег
+## `tc09-theme9-labs:latest` (див. docker-compose.theme9.yml) — тому
+## достатньо зібрати лише ОДИН раз. Раніше кожен сервіс мав власний
+## тег, і `docker compose build` з переліком усіх 7 сервісів намагався
+## експортувати 7 повних копій багатогігабайтного образу одночасно —
+## це і призводило до "no space left on device" навіть на дисках з
+## десятками вільних гігабайт.
+build:
+	$(COMPOSE_THEME9) build lab-setup
+
+## Запустити MLflow (потрібен для всіх лаб)
+mlflow-up:
+	$(COMPOSE_BASE) up -d mlflow
+	@echo "⏳ Чекаємо MLflow..."
+	@sleep 5
+	@echo "✅ MLflow → http://localhost:5000"
+
+# ─────────────────────────────────────────────────────────────────
+# OLLAMA: 100% офлайн LLM-провайдер (без ключа)
+# ─────────────────────────────────────────────────────────────────
+
+## Підняти сервіс Ollama (без завантаження моделі)
+ollama-up:
+	$(COMPOSE_THEME9) --profile ollama up -d ollama
+	@echo "⏳ Чекаємо Ollama..."
+	@sleep 3
+	@echo "✅ Ollama → http://localhost:11434"
+
+## Завантажити модель(і) в Ollama. ПОТРІБЕН ІНТЕРНЕТ, робиться ОДИН РАЗ
+## (заздалегідь, перед тим як вимикати мережу в аудиторії).
+ollama-pull: ollama-up
+	@echo "📦 Завантажуємо моделі Ollama (може зайняти кілька хвилин)..."
+	$(COMPOSE_THEME9) --profile ollama-setup run --rm ollama-pull
+	@echo "✅ Моделі завантажено — тепер можна працювати офлайн"
+
+## Перевірити, що Ollama піднята і потрібна модель вже завантажена
+ollama-check:
+	@python3 scripts/theme9_ollama_check.py
+
+# ─────────────────────────────────────────────────────────────────
+# КРОК 0: Дані та модель (потрібні один раз, беруться з основного репо)
+# ─────────────────────────────────────────────────────────────────
+
+## Згенерувати data/telco_customers.csv (з основного репо теми 8),
+## якщо його ще немає — файл гітований у .gitignore, тому в чистому
+## клоні репозиторію його НЕМАЄ і треба згенерувати самостійно.
+generate-data:
+	@if [ -f data/telco_customers.csv ]; then \
+		echo "✅ data/telco_customers.csv вже існує ($$(wc -l < data/telco_customers.csv) рядків)"; \
+	else \
+		echo "📦 Генеруємо data/telco_customers.csv (~1-2 хв)..."; \
+		$(COMPOSE_BASE) run --rm generator; \
+		echo "✅ Готово: data/telco_customers.csv"; \
+	fi
+
+## Натренувати churn_model.pkl на щойно згенерованих даних.
+## Спочатку пробуємо локальний python3 (яка версія scikit-learn вже
+## стоїть — та й буде використана). Якщо не вийшло (немає sklearn
+## локально) — падаємо назад на разовий Docker-контейнер із
+## scikit-learn==1.7.2 (та сама версія, що зашита в
+## docker/Dockerfile.labs — щоб pickle-формат завжди збігався
+## з тим, що читають лаби).
+## ВАЖЛИВО: якщо models/churn_model.pkl вже є в репо, але не
+## завантажується (MemoryError / UnpicklingError при joblib.load) —
+## файл пошкоджений (типова причина: бінарний файл був закомічений
+## з автоконвертацією рядків на Windows). У такому разі видали його
+## і перетренуй:  rm models/churn_model.pkl && make -f Makefile.theme9 train-model
+train-model: generate-data
+	@echo "🎓 Тренуємо churn_model.pkl (RandomForest, ColumnTransformer)..."
+	@python3 pipelines/train.py || \
+	 docker run --rm -v $(PWD):/app -w /app python:3.11-slim \
+	   sh -c "pip install --quiet scikit-learn==1.7.2 pandas joblib mlflow && python pipelines/train.py"
+	@echo "✅ models/churn_model.pkl готовий"
+
+## Перевірити, що модель і дані валідні (антидот від "MemoryError при joblib.load")
+## Логіка в scripts/theme9_verify_artifacts.py — НЕ inline python3 -c,
+## бо try/except неможливо коректно записати одним "склеєним" рядком
+## (саме це і спричиняло SyntaxError у попередній версії цього таргету).
+verify-artifacts:
+	@python3 scripts/theme9_verify_artifacts.py
+
+# ─────────────────────────────────────────────────────────────────
+# SETUP: Генерація churn_explanations.json (один раз до заняття)
+# ─────────────────────────────────────────────────────────────────
+
+## Генерувати churn_explanations.json (потрібен ОДИН ключ з .env.theme9)
+setup-data: check-env verify-artifacts mlflow-up
+	@echo "📦 Генеруємо churn пояснення..."
+	$(COMPOSE_THEME9) --profile setup run --rm lab-setup
+	@echo "✅ data/churn_explanations.json готовий"
+
+## Перевірити наявність готових даних
+check-data:
+	@if [ -f data/churn_explanations.json ]; then \
+		COUNT=$$(python3 -c "import json; d=json.load(open('data/churn_explanations.json')); print(len(d))"); \
+		echo "✅ churn_explanations.json — $$COUNT записів"; \
+	else \
+		echo "❌ churn_explanations.json не знайдено — запусти: make -f Makefile.theme9 setup-data"; \
+	fi
+	@if [ -f models/churn_model.pkl ]; then \
+		echo "✅ churn_model.pkl — готовий"; \
+	else \
+		echo "❌ churn_model.pkl не знайдено — запусти: make -f Makefile.theme9 train-model"; \
+	fi
+
+# ─────────────────────────────────────────────────────────────────
+# ЧАСТИНА A — ML Evaluation
+# ─────────────────────────────────────────────────────────────────
+
+theme9-part-a: verify-artifacts mlflow-up
+	@echo "\n═══ LAB A1: ML Evaluation ═══"
+	$(COMPOSE_THEME9) --profile part-a run --rm lab-a1
+	@echo "\n═══ LAB A2: Normal Mode ═══"
+	$(COMPOSE_THEME9) --profile part-a run --rm lab-a2
+	@echo "\n═══ LAB A2: Drift Mode (demo деградації) ═══"
+	$(COMPOSE_THEME9) --profile part-a-drift run --rm lab-a2-drift
+
+lab-a1: verify-artifacts mlflow-up
+	@echo "▶ Lab A1: ML Evaluation..."
+	$(COMPOSE_THEME9) --profile part-a run --rm lab-a1
+
+lab-a2: verify-artifacts mlflow-up
+	@echo "▶ Lab A2: Normal mode..."
+	$(COMPOSE_THEME9) --profile part-a run --rm lab-a2
+
+lab-a2-drift: verify-artifacts mlflow-up
+	@echo "▶ Lab A2: DRIFT mode (симуляція деградації)..."
+	$(COMPOSE_THEME9) --profile part-a-drift run --rm lab-a2-drift
+
+# ─────────────────────────────────────────────────────────────────
+# ЧАСТИНА B — LLM Evaluation
+# ─────────────────────────────────────────────────────────────────
+
+theme9-part-b: check-env check-data mlflow-up
+	@echo "\n═══ LAB B1: RAGAS Eval ═══"
+	$(COMPOSE_THEME9) --profile part-b run --rm lab-b1
+	@echo "\n═══ LAB B2: LLM-Judge ═══"
+	$(COMPOSE_THEME9) --profile part-b run --rm lab-b2
+
+lab-b1: check-env check-data mlflow-up
+	@echo "▶ Lab B1: RAGAS eval (50 samples, ~2-3 хв)..."
+	$(COMPOSE_THEME9) --profile part-b run --rm lab-b1
+
+lab-b1-fast: check-env check-data mlflow-up
+	@echo "▶ Lab B1: RAGAS eval FAST (10 samples)..."
+	$(COMPOSE_THEME9) --profile part-b-fast run --rm lab-b1-fast
+
+lab-b2: check-env check-data mlflow-up
+	@echo "▶ Lab B2: LLM-Judge comparison (20 samples)..."
+	$(COMPOSE_THEME9) --profile part-b run --rm lab-b2
+
+# ─────────────────────────────────────────────────────────────────
+# ПОВНИЙ ЗАПУСК
+# ─────────────────────────────────────────────────────────────────
+
+theme9-up: mlflow-up
+	$(COMPOSE_THEME9) --profile results up -d lab-results
+	@echo "✅ Сервіси запущено:"
+	@echo "   MLflow Results → http://localhost:5000"
+	@echo "   Lab Graphs     → http://localhost:8888"
+
+theme9-all: theme9-up verify-artifacts check-data
+	@echo "\n══════════════════════════════════════"
+	@echo " ТЕМА 9: Повний запуск всіх лаб"
+	@echo "══════════════════════════════════════"
+	$(MAKE) -f Makefile.theme9 lab-a1
+	$(MAKE) -f Makefile.theme9 lab-a2
+	$(MAKE) -f Makefile.theme9 lab-a2-drift
+	$(MAKE) -f Makefile.theme9 lab-b1
+	$(MAKE) -f Makefile.theme9 lab-b2
+	@echo "\n✅ Всі лаби завершено!"
+	@echo "   Графіки → http://localhost:8888"
+	@echo "   MLflow  → http://localhost:5000"
+
+theme9-down:
+	$(COMPOSE_THEME9) --profile results down
+	@echo "✅ Сервіси теми 9 зупинено"
+
+down-all:
+	$(COMPOSE_THEME9) --profile results --profile part-a \
+	  --profile part-b down --remove-orphans
+	@echo "✅ Всі сервіси зупинено"
+
+# ─────────────────────────────────────────────────────────────────
+# УТИЛІТИ
+# ─────────────────────────────────────────────────────────────────
+
+logs:
+	$(COMPOSE_THEME9) logs -f $(s)
+
+shell:
+	$(COMPOSE_THEME9) run --rm --entrypoint bash lab-setup
+
+show-results:
+	@echo "\n📊 Останні результати:\n"
+	@ls -la results/ 2>/dev/null || echo "  Немає результатів (папка results/ порожня)"
+
+clean-results:
+	@rm -f results/*.png results/*.csv results/*.txt
+	@echo "✅ results/ очищено"
+
+clean:
+	$(MAKE) -f Makefile.theme9 clean-results
+	@rm -f data/telco_customers_drifted.csv
+	@echo "✅ Тимчасові файли видалено"
+
+status:
+	@echo "\n🐳 Запущені контейнери:\n"
+	@docker compose -f docker-compose.yml \
+	  -f docker-compose.theme9.yml ps --format \
+	  "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+
+help:
+	@echo ""
+	@echo "═══════════════════════════════════════════════════"
+	@echo " Тема 9 — AI Evaluation Labs"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+	@echo " ШВИДКИЙ СТАРТ:"
+	@echo "  make -f Makefile.theme9 init             → скопіювати .env (перший раз)"
+	@echo "  make -f Makefile.theme9 build            → зібрати Docker образ"
+	@echo "  make -f Makefile.theme9 train-model       → згенерувати дані + натренувати модель"
+	@echo "  make -f Makefile.theme9 setup-data        → згенерувати churn пояснення"
+	@echo "  make -f Makefile.theme9 theme9-up         → підняти MLflow + Results viewer"
+	@echo ""
+	@echo " OFFLINE (LLM_PROVIDER=ollama, без ключа):"
+	@echo "  make -f Makefile.theme9 ollama-pull       → завантажити модель (ОДИН РАЗ, з інтернетом)"
+	@echo "  make -f Makefile.theme9 ollama-check      → перевірити, що все готово офлайн"
+	@echo ""
+	@echo " ЧАСТИНА A (ML):"
+	@echo "  make -f Makefile.theme9 lab-a1            → ML eval + threshold sweep"
+	@echo "  make -f Makefile.theme9 lab-a2            → Retrain check (healthy)"
+	@echo "  make -f Makefile.theme9 lab-a2-drift      → Retrain check (drift DEMO)"
+	@echo ""
+	@echo " ЧАСТИНА B (LLM, без OpenAI):"
+	@echo "  make -f Makefile.theme9 lab-b1            → RAGAS eval (50 прикладів)"
+	@echo "  make -f Makefile.theme9 lab-b1-fast       → RAGAS eval (10 прикладів, швидко)"
+	@echo "  make -f Makefile.theme9 lab-b2            → LLM-judge comparison"
+	@echo ""
+	@echo " ПОВНИЙ ЗАПУСК:"
+	@echo "  make -f Makefile.theme9 theme9-all        → всі лаби послідовно"
+	@echo ""
+	@echo " УТИЛІТИ:"
+	@echo "  make -f Makefile.theme9 verify-artifacts  → перевірити модель і дані"
+	@echo "  make -f Makefile.theme9 status            → статус контейнерів"
+	@echo "  make -f Makefile.theme9 logs s=lab-b1     → логи конкретного сервісу"
+	@echo "  make -f Makefile.theme9 clean             → очистити тимчасові файли"
+	@echo ""
+	@echo " URLs після запуску:"
+	@echo "  MLflow  → http://localhost:5000"
+	@echo "  Графіки → http://localhost:8888"
+	@echo "═══════════════════════════════════════════════════"
+	@echo ""
+
+.PHONY: init check-env build mlflow-up generate-data train-model verify-artifacts \
+        ollama-up ollama-pull ollama-check \
+        setup-data check-data \
+        theme9-part-a lab-a1 lab-a2 lab-a2-drift \
+        theme9-part-b lab-b1 lab-b1-fast lab-b2 \
+        theme9-up theme9-all theme9-down down-all \
+        logs shell show-results clean-results clean status help

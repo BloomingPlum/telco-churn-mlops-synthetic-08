@@ -213,3 +213,9 @@ __marimo__/
 # MLflow runtime state (created by the mlflow container)
 mlflow_db/*.db
 mlartifacts/
+
+# Theme 9 runtime files
+.env.theme9
+results/
+data/telco_customers_drifted.csv
+data/churn_explanations.json

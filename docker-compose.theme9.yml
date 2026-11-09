@@ -1,0 +1,356 @@
+# =============================================================================
+# docker-compose.theme9.yml
+# Розширення docker-compose.yml — Лабораторні роботи Теми 9
+#
+# Використання:
+#   # Повний стек (теми 1-8 + тема 9):
+#   docker compose -f docker-compose.yml -f docker-compose.theme9.yml up -d
+#
+#   # Швидкий старт (всі сервіси):
+#   make -f Makefile.theme9 theme9-up
+#
+# Нові сервіси:
+#   lab-setup    → підготовка даних: генерація churn_explanations.json
+#   lab-a1       → ML eval: threshold sweep + MLflow logging
+#   lab-a2       → Automated retrain: drift simulation + trigger
+#   lab-b1       → RAGAS eval на churn-поясненнях (без OpenAI)
+#   lab-b2       → LLM-judge vs CRM менеджер
+#   lab-results  → Nginx: відкриває графіки у браузері на :8888
+#
+# Порти:
+#   5000  → MLflow UI     (існуючий)
+#   8888  → Lab Results   (графіки PNG у браузері)
+#
+# ЗМІНА порівняно з оригіналом:
+#   - Додано override healthcheck для mlflow: базовий образ
+#     ghcr.io/mlflow/mlflow не гарантовано містить `curl`, тож
+#     healthcheck переписано на python3 (він точно є в образі).
+#     Якщо в тебе цей healthcheck вже працює на curl — можеш повернути.
+#   - Додано ANTHROPIC_MODEL / GOOGLE_API_KEY / GROQ_API_KEY /
+#     LLM_PROVIDER / EMBEDDING_MODEL до кожного LLM-сервісу.
+# =============================================================================
+
+services:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # OLLAMA: 100% локальний, безкоштовний LLM-провайдер — без жодного ключа.
+  # Використовується, коли LLM_PROVIDER=ollama у .env.theme9 (наприклад,
+  # для аудиторії без інтернету на самому занятті).
+  #
+  # Модель треба завантажити ЗАЗДАЛЕГІДЬ, поки є інтернет:
+  #   make -f Makefile.theme9 ollama-pull
+  #
+  # Ваги моделі зберігаються у named volume `ollama_models` — переживають
+  # перестворення контейнера (docker compose down / up), зникають лише
+  # при `docker volume rm`.
+  # ──────────────────────────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: theme9-ollama
+    ports:
+      - "11434:11434"          # опційно: щоб дістатись з хоста напряму
+    volumes:
+      - ollama_models:/root/.ollama
+    networks:
+      - mlops-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    profiles:
+      - ollama
+      - labs
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # OLLAMA-PULL: одноразовий сервіс, який тягне модель у той самий volume.
+  # Запускається явно: make -f Makefile.theme9 ollama-pull
+  # Потрібен інтернет ОДИН РАЗ, до заняття. Далі — все офлайн.
+  # ──────────────────────────────────────────────────────────────────────────
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: theme9-ollama-pull
+    volumes:
+      - ollama_models:/root/.ollama
+    networks:
+      - mlops-net
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        ollama serve & sleep 3 &&
+        ollama pull ${OLLAMA_MODEL:-llama3.2:3b} &&
+        ollama pull ${OLLAMA_EMBED_MODEL:-nomic-embed-text} &&
+        echo '✅ Моделі завантажено, можна вимикати інтернет' &&
+        kill %1
+    profiles:
+      - ollama-setup     # запускається тільки явно, не піднімається разом з labs
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Override healthcheck для mlflow з базового docker-compose.yml
+  # (curl не гарантовано присутній в офіційному образі mlflow)
+  # ──────────────────────────────────────────────────────────────────────────
+  mlflow:
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # LAB-SETUP: Підготовка даних для теми 9
+  # Генерує churn_explanations.json через обраного LLM_PROVIDER
+  # Запускати ОДИН РАЗ перед заняттям
+  # ──────────────────────────────────────────────────────────────────────────
+  lab-setup:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.labs
+    image: tc09-theme9-labs:latest
+    container_name: theme9-lab-setup
+    env_file: .env.theme9
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - LAB_STEP=setup
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./labs:/app/labs
+      - ./results:/app/results
+    command: python /app/labs/setup/generate_explanations.py
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlops-net
+    profiles:
+      - setup             # запускається тільки явно: --profile setup
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # LAB-A1: ML Evaluation — Threshold Sweep + MLflow Logging
+  # ──────────────────────────────────────────────────────────────────────────
+  lab-a1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.labs
+    image: tc09-theme9-labs:latest
+    container_name: theme9-lab-a1
+    env_file: .env.theme9
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - LAB_STEP=a1
+      - COST_FP=10
+      - COST_FN=300
+      - N_TEST_ROWS=2000
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./labs:/app/labs
+      - ./results:/app/results
+    command: python /app/labs/part_a/lab_a1_ml_eval.py
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlops-net
+    profiles:
+      - part-a
+      - labs
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # LAB-A2: Automated Retrain — Drift Simulation + Trigger
+  # ──────────────────────────────────────────────────────────────────────────
+  lab-a2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.labs
+    image: tc09-theme9-labs:latest
+    container_name: theme9-lab-a2
+    env_file: .env.theme9
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - LAB_STEP=a2
+      - BASELINE_F1=0.72
+      - F1_THRESHOLD=0.05
+      - DEMO_DRIFT=false
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./labs:/app/labs
+      - ./results:/app/results
+    command: python /app/labs/part_a/lab_a2_retrain.py
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlops-net
+    profiles:
+      - part-a
+      - labs
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # LAB-A2-DRIFT: Той самий скрипт але з DEMO_DRIFT=true
+  # ──────────────────────────────────────────────────────────────────────────
+  lab-a2-drift:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.labs
+    image: tc09-theme9-labs:latest
+    container_name: theme9-lab-a2-drift
+    env_file: .env.theme9
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - LAB_STEP=a2_drift
+      - BASELINE_F1=0.72
+      - F1_THRESHOLD=0.05
+      - DEMO_DRIFT=true
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./labs:/app/labs
+      - ./results:/app/results
+    command: python /app/labs/part_a/lab_a2_retrain.py
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlops-net
+    profiles:
+      - part-a-drift
+      - labs
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # LAB-B1: RAGAS Evaluation на Churn-Поясненнях (без OpenAI)
+  # Потребує: data/churn_explanations.json (з lab-setup)
+  # ──────────────────────────────────────────────────────────────────────────
+  lab-b1:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.labs
+    image: tc09-theme9-labs:latest
+    container_name: theme9-lab-b1
+    env_file: .env.theme9
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - LAB_STEP=b1
+      - RAGAS_THRESHOLD=0.85
+      - N_EVAL_SAMPLES=50
+      - LANGCHAIN_PROJECT=churn-ai-demo
+    volumes:
+      - ./data:/app/data
+      - ./labs:/app/labs
+      - ./results:/app/results
+    command: python /app/labs/part_b/lab_b1_ragas.py
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlops-net
+    profiles:
+      - part-b
+      - labs
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # LAB-B1-FAST: Швидка версія для демо (10 прикладів замість 50)
+  # ──────────────────────────────────────────────────────────────────────────
+  lab-b1-fast:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.labs
+    image: tc09-theme9-labs:latest
+    container_name: theme9-lab-b1-fast
+    env_file: .env.theme9
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - LAB_STEP=b1_fast
+      - RAGAS_THRESHOLD=0.85
+      - N_EVAL_SAMPLES=10
+      - LANGCHAIN_PROJECT=churn-ai-demo
+    volumes:
+      - ./data:/app/data
+      - ./labs:/app/labs
+      - ./results:/app/results
+    command: python /app/labs/part_b/lab_b1_ragas.py
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlops-net
+    profiles:
+      - part-b-fast
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # LAB-B2: LLM-Judge vs CRM Manager Feedback
+  # ──────────────────────────────────────────────────────────────────────────
+  lab-b2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.labs
+    image: tc09-theme9-labs:latest
+    container_name: theme9-lab-b2
+    env_file: .env.theme9
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - LAB_STEP=b2
+      - N_JUDGE_SAMPLES=20
+      - CORR_THRESHOLD=0.75
+      - LANGCHAIN_PROJECT=churn-ai-demo
+    volumes:
+      - ./data:/app/data
+      - ./labs:/app/labs
+      - ./results:/app/results
+    command: python /app/labs/part_b/lab_b2_judge.py
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlops-net
+    profiles:
+      - part-b
+      - labs
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # LAB-RESULTS: Nginx для перегляду графіків у браузері
+  # Відкрити: http://localhost:8888
+  # ──────────────────────────────────────────────────────────────────────────
+  lab-results:
+    image: nginx:1.27-alpine
+    container_name: theme9-results
+    ports:
+      - "8888:80"
+    volumes:
+      - ./results:/usr/share/nginx/html:ro
+      - ./docker/nginx-results.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - mlops-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider",
+             "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    profiles:
+      - results
+      - labs
+
+volumes:
+  ollama_models:
+    # Тримає завантажені моделі Ollama між перезапусками контейнерів.
+    # Видаляється лише вручну: docker volume rm <project>_ollama_models
+
+# =============================================================================
+# ДОПОМІЖНІ ФАЙЛИ
+# =============================================================================
+# docker/Dockerfile.labs           — базовий образ для всіх lab-сервісів
+# docker/nginx-results.conf        — конфіг для перегляду PNG-результатів
+# labs/common/llm_client.py        — multi-provider LLM (anthropic/gemini/groq)
+# labs/common/ragas_backend.py     — RAGAS без OpenAI (LLM + локальні embeddings)
+# labs/setup/generate_explanations.py
+# labs/part_a/lab_a1_ml_eval.py
+# labs/part_a/lab_a2_retrain.py
+# labs/part_b/lab_b1_ragas.py
+# labs/part_b/lab_b2_judge.py

@@ -1,0 +1,86 @@
+# docker/Dockerfile.labs
+# Базовий образ для всіх лабораторних сервісів Теми 9
+# Будується з кореня репо: docker build -f docker/Dockerfile.labs .
+
+FROM python:3.11-slim
+
+# ── Системні залежності ───────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Стійкість pip до повільної/нестабільної мережі ──────────────────
+# Дефолтний таймаут pip (15с на кожну read-операцію сокета) занадто
+# короткий для великих wheel-файлів (xgboost ~224МБ, torch, transformers,
+# ...) — на нестабільному з'єднанні читання може "зависнути" на кілька
+# секунд навіть у процесі успішного завантаження, і pip це трактує як
+# обрив. PIP_DEFAULT_TIMEOUT/PIP_RETRIES — офіційні env-змінні pip,
+# застосовуються до УСІХ pip-викликів нижче автоматично.
+ENV PIP_DEFAULT_TIMEOUT=180
+ENV PIP_RETRIES=10
+
+# ── CPU-only torch (уникаємо гігабайтів CUDA-залежностей) ──────────
+# `sentence-transformers` (у requirements-theme9.txt) вимагає
+# `torch>=1.11.0` без верхньої межі — і pip за замовчуванням поставить
+# GPU-версію з PyPI, яка тягне ~10 окремих nvidia-* пакетів
+# (nvidia-cublas, nvidia-cudnn, triton, ...) — разом кілька ГБ. У ЦЬОМУ
+# контейнері GPU ніколи немає (немає `--gpus`/`runtime: nvidia` у
+# docker-compose.theme9.yml, RAGAS/embeddings рахуються на CPU) —
+# тобто ці nvidia-пакети завантажуються і займають місце ДАРЕМНО,
+# ніколи не використовуючись.
+# Ставимо CPU-only torch ЗАЗДАЛЕГІДЬ, з офіційного індексу PyTorch —
+# тоді наступний `pip install sentence-transformers` побачить, що
+# `torch>=1.11.0` вже задоволено, і НЕ підмінить його на GPU-версію.
+# Винесено окремим шаром ДО COPY requirements-theme9.txt — щоб Docker
+# кешував цей важкий крок незалежно від змін у самому requirements-файлі.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torch>=2.2" \
+    || echo "WARNING: CPU-only torch index unreachable, falling back to default PyPI torch (larger image, build continues)"
+
+# ── Python залежності ────────────────────────────────────────────────
+# scikit-learn пінується ==1.7.2, бо саме цю версію студенти реально
+# використовують локально для `pipelines/train.py` (перевірено: жоден
+# пакет у цьому файлі — evidently, mlflow, sentence-transformers,
+# xgboost — не обмежує scikit-learn зверху нижче 1.7.2, конфліктів
+# немає). Якщо твоя локальна версія scikit-learn інша — заміни цифру
+# тут на свою (`pip show scikit-learn` локально) або перетренуй модель
+# всередині цього ж контейнера, щоб версії завжди збігались.
+#
+# ⚠️  Якщо ти ТАКОЖ використовуєш `Dockerfile.api`/`requirements-api.txt`
+# з ОСНОВНОГО репо (theme 7-8, продакшн-подібний сервінг моделі) — там
+# scikit-learn і досі запінований на 1.5.2. Якщо той сервіс вантажить
+# ЦЮ Ж модель (треновану під 1.7.2), варто оновити пін і там теж,
+# інакше побачиш той самий InconsistentVersionWarning вже в API-сервісі.
+#
+# ВАЖЛИВО: пакети встановлюються ОКРЕМИМИ RUN-шарами (а не одним великим
+# `pip install a b c && pip install -r ...`). Це навмисно: якщо один
+# великий пакет (xgboost ~224МБ) впаде через таймаут мережі, Docker
+# кешує всі ВЖЕ успішно встановлені шари вище — і `docker build` при
+# повторному запуску просто продовжить з місця обриву, а не почне
+# все завантажувати з нуля.
+RUN pip install --no-cache-dir "numpy>=1.26.0,<2.0"
+RUN pip install --no-cache-dir "scikit-learn==1.7.2"
+RUN pip install --no-cache-dir "xgboost>=2.0.0,<3.0"
+RUN pip install --no-cache-dir "joblib>=1.4.0,<2.0" "mlflow>=2.14.0,<3.0" "pandas>=2.2.0,<3.0"
+RUN pip install --no-cache-dir "evidently>=0.4.30,<0.5"
+
+COPY requirements-theme9.txt ./
+RUN pip install --no-cache-dir -r requirements-theme9.txt
+
+# ── Вихідний код лабораторій ──────────────────────────────────────
+COPY labs/ ./labs/
+
+# ── Директорія для результатів ────────────────────────────────────
+RUN mkdir -p /app/results /app/data /app/models
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Заздалегідь тягнемо локальну модель embeddings (sentence-transformers),
+# щоб на занятті RAGAS не чекав завантаження ваг з інтернету.
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+    SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')" || true
+
+CMD ["python", "-c", "print('Theme 9 Labs image ready. Use LAB_STEP env var to select lab.')"]

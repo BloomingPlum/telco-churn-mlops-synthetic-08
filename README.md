@@ -1,570 +1,520 @@
-# Telco Customer Churn - Synthetic Dataset with MLOps Pipeline
-# Kubernetes Deployment — Telco Churn MLOps Stack
+# Тема 9 — Docker Lab Setup
+## AI Evaluation, Drift & Continuous Improvement
 
-Topic 7 materials for the **Modern MLOps · LLMOps · AgenticOps** course.  
-Deploys three microservices (ML inference, RAG retrieval, LLM Agent) to a
-**k3s** Kubernetes cluster on Ubuntu.
+> **Репо-основа:** `telco-churn-mlops-synthetic-08`
+> **Що додається:** лабораторні роботи теми 9 як Docker-сервіси
+> **Запуск:** `make -f Makefile.theme9 theme9-all` або по одній лабі через `make -f Makefile.theme9 lab-a1`
+> **Модуль 8 (моніторинг):** [docs/MODULE8_MONITORING.md](docs/MODULE8_MONITORING.md) · попередній README — [docs/README_main.md](docs/README_main.md)
 
-> ⚠️ This guide targets **k3s on Ubuntu/Debian**.  
-> For minikube (macOS/Windows) see `k8s/scripts/deploy-minikube.sh`.
+---
 
-> 📈 **Module 8 — Monitoring with Docker Compose + custom metric `HIGH_RISK_PREDICTIONS`:**
-> see [docs/MODULE8_MONITORING.md](docs/MODULE8_MONITORING.md). Short version: `make model && make up && make high-risk-demo`.
+## ⚠️ Що виправлено в цій версії (важливо прочитати)
 
+Під час перевірки перед додаванням у репозиторій знайдено і виправлено 4 проблеми,
+які заблокували би демонстрацію лабораторних:
 
-## Overview
-This repository provides a synthetic dataset generator for Telco Customer Churn prediction, along with a full MLOps pipeline. It includes tools for data generation with built-in data drift, model training, experiment tracking using MLflow, API serving with FastAPI, monitoring, and deployment. The dataset is entirely synthetic (no real customer data) and is inspired by the public Telco Customer Churn dataset on Kaggle, licensed under CC BY-NC-SA 4.0.
-Key features:
+1. **Немає `data/telco_customers.csv` у чистому клоні репо.** Файл навмисно в
+   `.gitignore` (основний репо генерує його сам). Потрібно один раз викликати
+   `make -f Makefile.theme9 generate-data` (запускає існуючий сервіс `generator`
+   з `docker-compose.yml`).
+2. **`models/churn_model.pkl` у поточному репозиторії пошкоджений** — не
+   завантажується (`MemoryError` у `joblib.load`, незалежно від версії
+   numpy/scikit-learn — файл фізично обірваний, схоже на пошкодження при
+   заливанні бінарника на GitHub). Рішення: перетренувати модель локально —
+   `make -f Makefile.theme9 train-model` (обгортка над `pipelines/train.py`).
+3. **Баг вибору фіч у всіх лабораторних скриптах.** Оригінальний код будував
+   `X_test` через `df[feature_cols].select_dtypes(include="number")`, що
+   відкидає ВСІ категоріальні колонки (`Contract`, `PaymentMethod`,
+   `InternetService` та ін.). Модель — це `sklearn.Pipeline` з
+   `ColumnTransformer`, який очікує ці колонки за іменем (`num: passthrough`
+   + `cat: OneHotEncoder`), тож `model.predict()` падав з `KeyError`.
+   Виправлено у `lab_a1_ml_eval.py`, `lab_a2_retrain.py`,
+   `generate_explanations.py` — тепер передаються всі фічі, як і під час
+   тренування.
+4. **RAGAS мовчки вимагав `OPENAI_API_KEY`.** `evaluate()` без явних
+   `llm=`/`embeddings=` за замовчуванням використовує `ChatOpenAI` +
+   `OpenAIEmbeddings`. Тепер підключений мультипровайдерний шар — див.
+   розділ нижче. **OpenAI більше не потрібен ніде.**
 
-Generate 100,000+ records spanning 2023-01-01 to 2024-12-31.
-Simulate gradual concept drift (e.g., growth in fiber optic adoption, decline in electronic checks, reducing churn rates).
+Також відсутній `docker/nginx-results.conf`, на який посилався
+`docker-compose.theme9.yml` — файл додано.
 
-Realistic feature dependencies and a RecordDate column for time-based analysis.
-MLOps integration: Data Version Control (DVC), Airflow for orchestration, MLflow for experiment tracking and model registry, Kubernetes for deployment, and monitoring for drift detection.
+---
 
-## Repository Structure
+## 🆓 Безкоштовні LLM-ключі (замість OPENAI_API_KEY)
 
-- .dvc/: DVC configuration for data and pipeline tracking.
-- airflow/dags/: Airflow DAGs for ML workflows.
-- conf/ and config/: Configuration files for experiments and pipelines.
-- data/: Generated synthetic data (e.g., telco_customers.csv).
-- deployment/: Kubernetes manifests for production deployment.
-- docs/: Additional documentation and diagrams.
-- mlflow/: MLflow configurations, registration scripts, and setup guide.
-- mlflow_db/: Persistent storage for MLflow database.
-- models/: Trained model artifacts.
-- monitoring/: Scripts for data/concept drift detection, A/B testing, and shadow datasets.
-- notebooks/: Jupyter notebooks for data exploration and analysis.
-- pipelines/: Training and prediction pipelines (e.g., train.py, predict.py).
-- src/: Source code for data generation (e.g., generate_dataset_ext.py).
-- tests/: Unit tests (e.g., test_api_predict.py).
+У жодному зі скриптів тепер немає обов'язкової залежності від OpenAI.
+Обери **ОДНОГО** провайдера через `LLM_PROVIDER` у `.env.theme9`:
 
-Dockerfile and Dockerfile.api: Docker images for the project and API.
+| Провайдер | `LLM_PROVIDER=` | Вартість | Де взяти ключ | Швидкість | Якість пояснень | Потрібен інтернет на занятті? |
+|---|---|---|---|---|---|---|
+| **Google Gemini** (рекомендовано для груп) | `gemini` | Безкоштовно (щедрий free tier) | https://aistudio.google.com/apikey — без картки | Середня | Добра | Так |
+| **Groq** (рекомендовано, якщо потрібна швидкість) | `groq` | Безкоштовно (free tier, ліміт запитів/хв) | https://console.groq.com/keys | Дуже висока (LPU) | Добра (Llama 3.3 70B) | Так |
+| **Anthropic** (код вже був написаний під нього) | `anthropic` | Платно, дуже дешево (~$0.15 на всі лаби групи) | https://console.anthropic.com | Висока | Найкраща | Так |
+| **Ollama** (для аудиторії без мережі) | `ollama` | Безкоштовно, без ключа | не потрібен — локальна модель у Docker | Залежить від CPU/RAM (без GPU повільно) | Слабша (модель ~3B) | **Ні** (після одноразового `ollama-pull` з інтернетом) |
 
-- docker-compose.yml: Composes services like data generator, Jupyter, API, and MLflow.
+**Для embeddings у RAGAS (метрика `answer_relevancy`) ключ не потрібен ніколи** —
+використовується локальна модель `sentence-transformers/all-MiniLM-L6-v2`
+(HuggingFace), яка працює повністю офлайн після першого завантаження ваг
+(~90 МБ, тягнеться автоматично під час `docker build`).
+
+### Швидкий старт з Gemini (найпростіший безкоштовний варіант)
+
+```bash
+cp .env.theme9.example .env.theme9
 ```
-telco-churn-mlops-synthetic-07/
-├── k8s/
-│   ├── base/                          ← Core K8s manifests
-│   │   ├── namespace.yaml             ← namespace: mlops
-│   │   ├── configmap.yaml             ← ml-config, rag-config, agent-config
-│   │   ├── secrets.yaml               ← llm-secrets (placeholders only)
-│   │   ├── rag-pvc.yaml               ← PersistentVolumeClaim for ChromaDB
-│   │   ├── ml-deployment.yaml         ← churn-predictor FastAPI (port 8000)
-│   │   ├── ml-service.yaml
-│   │   ├── ml-hpa.yaml                ← HorizontalPodAutoscaler 2→10 pods
-│   │   ├── rag-deployment.yaml        ← ChromaDB + FastAPI (port 8001)
-│   │   ├── rag-service.yaml
-│   │   ├── agent-deployment.yaml      ← LLM Agent FastAPI (port 8002)
-│   │   ├── agent-service.yaml
-│   │   ├── ingress.yaml               ← Traefik ingress: /ml /rag /agent
-│   │   └── kustomization.yaml
-│   ├── overlays/
-│   │   ├── dev/kustomization.yaml     ← 1 replica, :dev tags, DEBUG logs
-│   │   └── prod/kustomization.yaml    ← 3 replicas, pinned tags, WARNING logs
-│   └── scripts/
-│       ├── deploy-k3s.sh              ← ✅ One-shot deploy on k3s (use this)
-│       ├── deploy-minikube.sh         ← minikube variant (macOS/Windows)
-│       ├── demo.sh                    ← Interactive 6-step demo
-│       ├── ingest-knowledge.sh        ← Load knowledge_base.json into RAG
-│       ├── rotate-secret.sh           ← Rotate OpenAI key + rolling restart
-│       └── teardown.sh                ← Remove all resources
+
+У `.env.theme9`:
+```bash
+LLM_PROVIDER=gemini
+GOOGLE_API_KEY=AIza...    # aistudio.google.com/apikey, 30 секунд, без картки
+```
+
+### Швидкий старт з Groq (якщо потрібна максимальна швидкість на занятті)
+
+```bash
+LLM_PROVIDER=groq
+GROQ_API_KEY=gsk_...      # console.groq.com/keys
+```
+
+### Якщо в тебе вже є Anthropic-ключ
+
+```bash
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+> 💡 **Для групи студентів:** видай кожному свій безкоштовний Gemini-ключ
+> (реєстрація займає хвилину, не потребує картки) — це найпростіший спосіб,
+> щоб усі одночасно запускали лабораторні без спільного платного ключа.
+
+### 🔌 Повністю офлайн-варіант: Ollama (без жодного ключа)
+
+Якщо в аудиторії немає інтернету на самому занятті — використай `ollama`.
+Модель виконується у власному Docker-сервісі, локально, без виходу в мережу.
+
+**Єдина умова:** модель треба завантажити ЗАЗДАЛЕГІДЬ, поки інтернет є
+(наприклад, за день до заняття, у себе вдома чи в офісі):
+
+```bash
+# 1. У .env.theme9:
+LLM_PROVIDER=ollama
+#    (OLLAMA_BASE_URL / OLLAMA_MODEL / OLLAMA_EMBED_MODEL — можна лишити дефолтні)
+
+# 2. Підняти Ollama і завантажити модель (ОДИН РАЗ, з інтернетом):
+make -f Makefile.theme9 ollama-pull
+
+# 3. Перевірити, що все готово офлайн:
+make -f Makefile.theme9 ollama-check
+```
+
+Після цього кроку `ollama-pull` можна вимикати інтернет — усі лаби
+(`generate_explanations.py`, `lab_b1_ragas.py`, `lab_b2_judge.py`) працюють
+проти локального сервіса `ollama` в тій самій Docker-мережі `mlops-net`.
+
+**Компроміси, які варто знати заздалегідь:**
+- Дефолтна модель `llama3.2:3b` — маленька (3 млрд параметрів), тож якість
+  churn-пояснень і оцінок LLM-judge помітно слабша за Gemini/Groq/Anthropic.
+  Для демонстрації самого **механізму** (RAGAS, LLM-as-judge, CI gate) цього
+  достатньо; для "гарних" прикладів пояснень краще хмарний провайдер.
+- Швидкість залежить від CPU/RAM ноутбука — без GPU 20-50 пояснень можуть
+  зайняти помітно довше, ніж хмарні API. Для демо варто зменшити
+  `N_EVAL_SAMPLES` / `N_JUDGE_SAMPLES` (наприклад, до 5–10) і використати
+  `make -f Makefile.theme9 lab-b1-fast`.
+- Образ `ollama/ollama` + модель `llama3.2:3b` (~2 ГБ) + `nomic-embed-text`
+  (~270 МБ) — переконайся, що це влізає на диск і завантажиться до
+  заняття, а не в останній момент.
+- Якщо хочеш взагалі прибрати залежність від `sentence-transformers` у
+  Docker-образі лабораторій — постав `EMBEDDING_BACKEND=ollama` в
+  `.env.theme9` (тоді і embeddings для RAGAS йдуть через `nomic-embed-text`
+  в Ollama, а не через HuggingFace).
+
+---
+
+## Структура нових файлів
+
+```
+telco-churn-mlops-synthetic-08/
 │
-├── services/
-│   ├── ml/app.py                      ← FastAPI sklearn inference (port 8000)
-│   ├── rag/app.py                     ← FastAPI ChromaDB service (port 8001)
-│   └── agent/app.py                   ← FastAPI LLM agent (port 8002)
+├── docker-compose.yml              ← ІСНУЮЧИЙ (теми 1–8)
+├── docker-compose.theme9.yml       ← НОВИЙ: override для теми 9
 │
-├── models/churn_model.pkl             ← sklearn Pipeline (joblib) — retrain first!
-├── data/
-│   ├── telco_customers.csv            ← training data
-│   └── knowledge_base.json            ← RAG knowledge base (8 docs)
-└── pipelines/train.py                 ← Train and save churn_model.pkl
+├── docker/
+│   ├── Dockerfile.labs             ← НОВИЙ: базовий образ лабораторій
+│   └── nginx-results.conf          ← НОВИЙ: перегляд графіків
+│
+├── labs/
+│   ├── common/
+│   │   ├── llm_client.py           ← НОВИЙ: multi-provider LLM (anthropic/gemini/groq)
+│   │   └── ragas_backend.py        ← НОВИЙ: RAGAS без OpenAI
+│   ├── setup/
+│   │   └── generate_explanations.py ← генерація churn пояснень (фікс фіч)
+│   ├── part_a/
+│   │   ├── lab_a1_ml_eval.py       ← threshold sweep + MLflow (фікс фіч)
+│   │   └── lab_a2_retrain.py       ← drift detection + trigger (фікс фіч)
+│   └── part_b/
+│       ├── lab_b1_ragas.py         ← RAGAS eval на churn даних (без OpenAI)
+│       └── lab_b2_judge.py         ← LLM-judge vs менеджер (multi-provider)
+│
+├── results/                        ← PNG графіки, CSV звіти (генерується автоматично)
+│
+├── .env.theme9.example             ← НОВИЙ: шаблон env (без OpenAI)
+├── Makefile.theme9                 ← НОВИЙ: зручні команди + generate-data/train-model
+└── requirements-theme9.txt         ← НОВИЙ: LLM залежності (без OpenAI)
 ```
 
 ---
 
-## Prerequisites
+## Сервіси
 
-| Tool | Min version | Install |
-|------|-------------|---------|
-| k3s | v1.28+ | `curl -sfL https://get.k3s.io \| sh -` |
-| kubectl | 1.28+ | included with k3s |
-| Docker | 24+ | `sudo apt-get install -y docker.io` |
-| Python | 3.11+ | `sudo apt-get install -y python3.11` |
-
-### k3s vs minikube — what changed
-
-| | minikube | k3s (this guide) |
-|---|---|---|
-| Ingress controller | nginx addon | **Traefik built-in** — no addon needed |
-| Image loading | `eval $(minikube docker-env)` | `docker save \| sudo k3s ctr images import -` |
-| StorageClass | `standard` | **`local-path`** |
-| Cluster IP | `minikube ip` | `kubectl get nodes -o jsonpath=...` |
-| Stop cluster | `minikube stop` | `sudo systemctl stop k3s` |
+| Сервіс | Profile | Порт | Опис |
+|--------|---------|------|------|
+| `mlflow` | *(існуючий)* | 5000 | MLflow Tracking UI |
+| `generator` | *(існуючий)* | — | Генерація `data/telco_customers.csv` |
+| `lab-setup` | `setup` | — | Генерація `churn_explanations.json` |
+| `lab-a1` | `part-a`, `labs` | — | ML eval + threshold sweep |
+| `lab-a2` | `part-a`, `labs` | — | Retrain check (healthy mode) |
+| `lab-a2-drift` | `part-a-drift`, `labs` | — | Retrain check (drift demo) |
+| `lab-b1` | `part-b`, `labs` | — | RAGAS eval (50 прикладів) |
+| `lab-b1-fast` | `part-b-fast` | — | RAGAS eval (10 прикладів, швидко) |
+| `lab-b2` | `part-b`, `labs` | — | LLM-judge comparison |
+| `lab-results` | `results`, `labs` | **8888** | Nginx: перегляд графіків |
+| `ollama` | `ollama`, `labs` | 11434 | Локальний LLM (тільки якщо `LLM_PROVIDER=ollama`) |
+| `ollama-pull` | `ollama-setup` | — | Одноразове завантаження моделі (`make ollama-pull`) |
 
 ---
 
-## Quick Start on k3s (15 minutes)
+## Перший запуск (один раз, у такому порядку)
+
+### 1. Скопіювати .env та обрати безкоштовного провайдера
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/mentorchita/telco-churn-mlops-synthetic-07
-cd telco-churn-mlops-synthetic-07
-
-# 2. Set up kubectl without sudo (one-time setup)
-mkdir -p ~/.kube
-sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-sudo chown $USER ~/.kube/config
-
-# 3. Set your OpenAI API key (optional — fallback runs without it)
-export OPENAI_API_KEY="sk-proj-..."
-
-# 4. One-shot deploy (trains model + builds images + deploys everything)
-chmod +x k8s/scripts/*.sh
-./k8s/scripts/deploy-k3s.sh
-
-# 5. Run the interactive demo
-./k8s/scripts/demo.sh
+make -f Makefile.theme9 init
 ```
+
+Відкрити `.env.theme9`, встановити `LLM_PROVIDER` і заповнити **один** ключ
+(див. розділ "Безкоштовні LLM-ключі" вище).
+
+### 2. Згенерувати дані та натренувати модель
+
+```bash
+make -f Makefile.theme9 train-model
+```
+
+Це послідовно: генерує `data/telco_customers.csv` (сервіс `generator`,
+~50К рядків, ~1-2 хв) і тренує `models/churn_model.pkl` через
+`pipelines/train.py`. **Не пропускай цей крок**, навіть якщо
+`models/churn_model.pkl` вже лежить у репо — поточна закомічена версія
+пошкоджена (див. розділ вище).
+
+### 3. Перевірити артефакти
+
+```bash
+make -f Makefile.theme9 verify-artifacts
+```
+
+Має вивести два `✅`. Якщо бачиш `❌ churn_model.pkl ПОШКОДЖЕНО` —
+`rm models/churn_model.pkl && make -f Makefile.theme9 train-model`.
+
+### 4. Зібрати образ лабораторій
+
+```bash
+make -f Makefile.theme9 build
+```
+
+### 5. Згенерувати churn-пояснення (один раз, ~2–5 хвилин залежно від провайдера)
+
+```bash
+make -f Makefile.theme9 setup-data
+```
+
+Запустить `lab-setup` → обраний LLM_PROVIDER → збереже
+`data/churn_explanations.json` (50 записів).
 
 ---
 
-## Manual Step-by-Step Deploy
-
-### 1. Verify k3s
+## Запуск під час заняття
 
 ```bash
-sudo k3s kubectl get nodes
-# NAME      STATUS   ROLES                  AGE
-# vagrant   Ready    control-plane,master   ...
+make -f Makefile.theme9 theme9-up          # MLflow + Results viewer
 
-# One-time kubectl setup:
-mkdir -p ~/.kube
-sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-sudo chown $USER ~/.kube/config
-kubectl get nodes   # works without sudo now
+# Частина A: ML Evaluation
+make -f Makefile.theme9 lab-a1             # threshold sweep
+make -f Makefile.theme9 lab-a2             # healthy model
+make -f Makefile.theme9 lab-a2-drift       # drift demo
+
+# Частина B: LLM Evaluation (без OpenAI)
+make -f Makefile.theme9 lab-b1             # RAGAS (50 samples)
+make -f Makefile.theme9 lab-b1-fast        # RAGAS (10 samples, швидко)
+make -f Makefile.theme9 lab-b2             # LLM-judge
 ```
 
-
-## Manual Installation
-
-Clone the repository:textgit clone https://github.com/mentorchita/telco-churn-mlops-synthetic-05.git
-
-cd telco-churn-mlops-synthetic-05
-
-Create a virtual environment and install dependencies:textpython -m venv venv
-```sh
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-```sh
-pip install -r requirements.txt
-```
-```sh
-pip install -r requirements-ml.txt  # For MLflow and training dependencies
-```
-```sh
-pip install -r requirements-api.txt  # For FastAPI
-```
-```sh
-pip install -r requirements-dev.txt  # Optional: For linting, Jupyter, etc.
-```
-## Usage
-
-### Data Generation
-
-Generate synthetic data using the provided scripts.
-
-Standard generation:
-```sh
-python src/generate_dataset.py
-```
-Custom generation:
-```sh
-python src/generate_dataset.py --samples 100000 --output-dir data/ --start-date 2022-01-01 --end-date 2024-12-31
-```
-
-Enhanced generation (using config.yaml):
-```sh
-python src/generate_dataset_ext.py --samples 20000 --conv-samples 3000
-```
-
-Output files will be placed in data/ (e.g., telco_customers.csv, support_conversations.csv).
-
-### Makefile Commands
-
-Use make for streamlined workflows:
-
-- make help: List all commands.
-- make install: Install base dependencies.
-- make install-dev: Install development tools (e.g., Ruff, Black, Jupyter).
-- make generate-ext: Generate extended dataset.
-- make explore: Launch Jupyter.
-- make lint: Check code style.
-- make format: Fix code style.
-- make clean-data: Clean generated data.
-- make train: Train the churn model (logs to MLflow).
-- make docker-up: Start all services via Docker Compose.
-- make jupyter-up: Launch Jupyter container.
-- make jupyter-down: Stop Jupyter.
-- make jupyter-logs: View Jupyter logs (includes access token).
-
-## ML Training
-Run `make train` 
-### 2. Train the model
-
-> The `models/churn_model.pkl` in the repo may be a `numpy.ndarray` (predictions array),
-> not a sklearn Pipeline. **Always retrain before deploying.**
-
-```bash
-python3 pipelines/train.py
-# Expected: "Accuracy (no mlflow): 0.79xx"  +  "Model saved to models/churn_model.pkl"
-
-# Verify:
-python3 -c "
-import joblib
-m = joblib.load('models/churn_model.pkl')
-print(type(m).__name__)   # must print: Pipeline
-"
-```
-
- 
-
-## Testing the Predict API
-
-The `/predict` endpoint accepts customer features as JSON and returns churn prediction.
-
-### Quick test with curl:
-
-```bash
-docker t \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tenure": 12,
-    "MonthlyCharges": 65.5,
-    "TotalCharges": 786.0,
-    "gender": "Male",
-    "SeniorCitizen": 0,
-    "Partner": "Yes",
-    "Dependents": "No",
-    "PhoneService": "Yes",
-    "MultipleLines": "No",
-    "InternetService": "Fiber optic",
-    "OnlineSecurity": "No",
-    "OnlineBackup": "No",
-    "DeviceProtection": "No",
-    "TechSupport": "No",
-    "StreamingTV": "No",
-    "StreamingMovies": "No",
-    "Contract": "Month-to-month",
-    "PaperlessBilling": "Yes",
-    "PaymentMethod": "Electronic check"
-  }'
-```
-
-### Python script test:
-
-```bash
-# Install requests if not already installed
-pip install requests
-
-# Run the test script
-python test_api_predict.py
-```
-
-The test script will:
-1. Check `/health` endpoint (confirms API is running and model is loaded)
-
-2. Send sample customer data to `/predict`
-
-3. Display the churn prediction result (probability and binary classification)
-
-### Via Docker Compose:
-
-```bash
-# Start all services (generator, jupyter, api, mlflow)
-
-docker-compose up --build
-
-# In another terminal, test the API
-
-curl http://localhost:8000/health
-
-
-```
-
-## Deployment
-Use deployment/ for Kubernetes manifests to deploy the API and MLflow in production.
-### 3. Build images and import into k3s
-
-```bash
-# Build with host Docker daemon (do NOT use eval $(minikube docker-env))
-docker build -t churn-predictor:latest services/ml/
-docker build -t churn-rag:latest       services/rag/
-docker build -t churn-agent:latest     services/agent/
-
-# Import into k3s containerd (required after every build)
-docker save churn-predictor:latest | sudo k3s ctr images import -
-docker save churn-rag:latest       | sudo k3s ctr images import -
-docker save churn-agent:latest     | sudo k3s ctr images import -
-
-# Verify
-sudo k3s ctr images ls | grep churn
-```
-
-### 4. Namespace and secrets
-
-```bash
-kubectl apply -f k8s/base/namespace.yaml
-
-kubectl create secret generic llm-secrets \
-  --from-literal=openai_api_key="${OPENAI_API_KEY:-placeholder}" \
-  --from-literal=mlflow_tracking_uri="http://mlflow:5000" \
-  --from-literal=mlflow_tracking_token="demo-token" \
-  -n mlops \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl apply -f k8s/base/configmap.yaml
-```
-
-### 5. PVC — must set storageClass: local-path for k3s
-
-```bash
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: rag-pvc
-  namespace: mlops
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: local-path
-  resources:
-    requests:
-      storage: 5Gi
-EOF
-```
-
-### 6. Deploy all services
-
-```bash
-kubectl apply -f k8s/base/ml-deployment.yaml
-kubectl apply -f k8s/base/ml-service.yaml
-kubectl apply -f k8s/base/ml-hpa.yaml
-kubectl apply -f k8s/base/rag-deployment.yaml
-kubectl apply -f k8s/base/rag-service.yaml
-kubectl apply -f k8s/base/agent-deployment.yaml
-kubectl apply -f k8s/base/agent-service.yaml
-```
-
-### 7. Ingress — patch to Traefik
-
-```bash
-kubectl apply -f k8s/base/ingress.yaml
-
-# k3s has Traefik built-in; patch ingressClassName
-kubectl patch ingress mlops-ingress -n mlops \
-  --type='json' \
-  -p='[{"op":"replace","path":"/spec/ingressClassName","value":"traefik"}]'
-```
-
-### 8. Mount model via hostPath
-
-```bash
-MODELS_DIR=$(realpath models/)
-kubectl patch deployment churn-ml-service -n mlops --patch "
-spec:
-  template:
-    spec:
-      containers:
-      - name: churn-ml
-        volumeMounts:
-        - name: model-storage
-          mountPath: /models
-          readOnly: true
-      volumes:
-      - name: model-storage
-        hostPath:
-          path: ${MODELS_DIR}
-          type: Directory
-"
-kubectl rollout status deployment/churn-ml-service -n mlops
-```
-
-### 9. Configure /etc/hosts
-
-```bash
-NODE_IP=$(kubectl get nodes \
-  -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-echo "$NODE_IP  mlops.local" | sudo tee -a /etc/hosts
-```
-
-### 10. Load knowledge base into RAG
-
-```bash
-./k8s/scripts/ingest-knowledge.sh
-```
+Або все одразу: `make -f Makefile.theme9 theme9-all`
 
 ---
 
-## API Reference
+## URLs після запуску
 
-### ML Service — port 8000 / Ingress path `/ml`
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | `{"status":"ok","model_loaded":true}` |
-| POST | `/predict` | Predict churn probability |
-| GET | `/metrics` | Model metadata |
-
-> ⚠️ **Field names are case-sensitive and match `telco_customers.csv` exactly.**  
-> Use `MonthlyCharges` not `monthly_charges`. Use `Contract` not `contract_type`.
-
-```bash
-curl -s -X POST http://localhost:8001/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tenure": 8, "MonthlyCharges": 79.90, "TotalCharges": 639.20,
-    "Contract": "Month-to-month", "InternetService": "Fiber optic",
-    "PaymentMethod": "Electronic check",
-    "gender": "Male", "SeniorCitizen": 0, "Partner": "No", "Dependents": "No",
-    "PhoneService": "Yes", "MultipleLines": "No", "OnlineSecurity": "No",
-    "OnlineBackup": "No", "DeviceProtection": "No", "TechSupport": "No",
-    "StreamingTV": "No", "StreamingMovies": "No", "PaperlessBilling": "Yes"
-  }' | python3 -m json.tool
-```
-
-### RAG Service — port 8001 / Ingress path `/rag`
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | `{"chroma_ready":true,"doc_count":8}` |
-| POST | `/ingest` | Index documents |
-| POST | `/query` | Semantic search |
-| DELETE | `/collection` | Clear all docs (lab reset) |
-
-### Agent Service — port 8002 / Ingress path `/agent`
-
-Agent uses **snake_case** field names (its own schema):
-
-```bash
-curl -s -X POST http://localhost:8003/run \
-  -H "Content-Type: application/json" \
-  -d '{
-    "customer_id": "CUST-7890",
-    "tenure": 8,
-    "monthly_charges": 79.90,
-    "contract_type": "month-to-month",
-    "internet_service": "Fiber optic",
-    "payment_method": "Electronic check"
-  }' | python3 -m json.tool
-```
+| URL | Що відкривається |
+|-----|-----------------|
+| http://localhost:5000 | MLflow UI — runs, metrics, artifacts |
+| http://localhost:8888 | Nginx — всі PNG графіки результатів |
+| http://localhost:8888/lab_a1_results.png | Lab A1: confusion matrix + threshold sweep |
+| http://localhost:8888/lab_b1_ragas_results.png | Lab B1: RAGAS метрики + scatter |
+| http://localhost:8888/lab_b2_judge_results.png | Lab B2: judge vs human correlation |
 
 ---
 
-## Lab Exercises
+## Змінні середовища
 
-### Scale deployments
-```bash
-kubectl scale deployment churn-ml-service --replicas=4 -n mlops
-kubectl get pods -n mlops -w
-kubectl scale deployment churn-ml-service --replicas=2 -n mlops
-```
-
-### Rolling update — deploy new model
-```bash
-# Retrain model (simulates v1.1)
-python3 pipelines/train.py
-
-# Pod reads new pkl from hostPath automatically on restart
-kubectl rollout restart deployment/churn-ml-service -n mlops
-kubectl rollout status  deployment/churn-ml-service -n mlops
-kubectl rollout history deployment/churn-ml-service -n mlops
-
-# Rollback if needed
-kubectl rollout undo deployment/churn-ml-service -n mlops
-```
-
-### HPA in action
-```bash
-kubectl get hpa -n mlops
-kubectl top pods -n mlops   # requires metrics-server
-# Install: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-```
-
-### Kustomize overlays
-```bash
-kubectl apply -k k8s/overlays/dev/
-kubectl apply -k k8s/overlays/prod/
-```
-
-### Rotate the OpenAI API key
-```bash
-export OPENAI_API_KEY="sk-proj-new-key"
-./k8s/scripts/rotate-secret.sh
-```
+| Змінна | За замовчуванням | Опис |
+|--------|-----------------|------|
+| `LLM_PROVIDER` | `gemini` | `anthropic` \| `gemini` \| `groq` \| `ollama` |
+| `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` / `GROQ_API_KEY` | — | Заповнюється лише той, що відповідає провайдеру (`ollama` — без ключа) |
+| `OLLAMA_BASE_URL` | `http://ollama:11434` | Адреса Docker-сервіса Ollama в мережі `mlops-net` |
+| `OLLAMA_MODEL` / `OLLAMA_EMBED_MODEL` | `llama3.2:3b` / `nomic-embed-text` | Моделі, які тягне `make ollama-pull` |
+| `EMBEDDING_BACKEND` | `huggingface` | `huggingface` (локально, в образі) \| `ollama` |
+| `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Локальні embeddings для RAGAS, без ключа |
+| `LANGCHAIN_API_KEY` | — | LangSmith трасування (опційно, безкоштовний free tier) |
+| `COST_FP` / `COST_FN` | `10` / `300` | Вартість FP/FN ($) для threshold sweep |
+| `BASELINE_F1` / `F1_THRESHOLD` | `0.72` / `0.05` | Baseline F1 та допустима деградація для trigger |
+| `RAGAS_THRESHOLD` | `0.85` | Мінімальний faithfulness для eval gate |
+| `N_EVAL_SAMPLES` / `N_JUDGE_SAMPLES` | `50` / `20` | Кількість прикладів для RAGAS / LLM-judge |
+| `DEMO_DRIFT` | `false` | Симуляція дрейфу (lab-a2) |
 
 ---
 
-## Troubleshooting
+## Типові проблеми
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `ImagePullBackOff` | Image not in k3s containerd | `docker save <img> \| sudo k3s ctr images import -` |
-| `CrashLoopBackOff` | App crash on startup | `kubectl logs <pod> -n mlops` |
-| `chroma_ready: false` | chromadb/httpx conflict | `chromadb==0.4.24 numpy==1.26.4 httpx==0.27.2` in `services/rag/requirements.txt` |
-| `model_loaded: false` | Wrong pkl type or no hostPath | Retrain: `python3 pipelines/train.py`, add hostPath patch |
-| `columns are missing: RecordDate` | Old pkl trained with RecordDate | Retrain — `train.py` now drops it automatically |
-| Ingress ADDRESS empty | Wrong ingressClassName | Patch to `traefik` (see Step 7 above) |
-| PVC `Pending` | StorageClass missing | Set `storageClassName: local-path` |
-| `Expecting value` on curl | Port-forward not running | `kubectl port-forward svc/churn-ml-svc 8001:80 -n mlops &` |
+### `churn_model.pkl` не завантажується (`MemoryError`, `UnpicklingError`)
 
-### Universal debug sequence
+Файл пошкоджений — перетренуй:
 ```bash
-kubectl get pods -n mlops                     # overall status
-kubectl describe pod <pod-name> -n mlops      # events + scheduling errors
-kubectl logs <pod-name> -n mlops              # application output
-kubectl exec -it <pod-name> -n mlops -- sh    # shell inside pod
+rm models/churn_model.pkl
+make -f Makefile.theme9 train-model
 ```
+
+### `data/telco_customers.csv` не знайдено
+
+```bash
+make -f Makefile.theme9 generate-data
+```
+
+### `KeyError` при `model.predict()` на власному скрипті
+
+Швидше за все, у X_test передані лише числові колонки. Модель — це
+`ColumnTransformer` з окремою гілкою для категоріальних колонок
+(`Contract`, `PaymentMethod`, ...) — передавай **усі** фічі, окрім
+`customerID` і `Churn`.
+
+### `429 ResourceExhausted` / `quota exceeded` при генерації пояснень
+
+Безкоштовні тарифи мають жорсткий ліміт запитів/хвилину (наприклад,
+`gemini-3.1-flash-lite` free tier — лише **15 RPM**). Це вже враховано:
+`llm_client.py` сам тротлить запити під цей ліміт, а `lab_b1_ragas.py`
+серіалізує паралельні виклики RAGAS (`RAGAS_MAX_WORKERS`). Якщо 429
+все ж трапляється:
+- це нормально бачити кілька рядків `⏳ Rate limit (...), спроба N/4` —
+  скрипт сам почекає ~45с і продовжить;
+- якщо падає постійно — можливо, ти запустив кілька лаб (`lab-b1` і
+  `lab-b2`) одночасно і вони разом перевищують ліміт; запускай по одній;
+- швидке рішення для демо: `make -f Makefile.theme9 lab-b1-fast`
+  (10 прикладів замість 50) або тимчасово `LLM_PROVIDER=groq` (вищий RPM).
+
+### `ValueError: metric [context_recall] ... requires ... ['ground_truth']`
+
+`lab_b1_ragas.py` тепер вимагає, щоб `data/churn_explanations.json` містив
+поле `ground_truth` для кожного запису (потрібне метриці RAGAS
+`context_recall`). Якщо файл згенерований СТАРОЮ версією
+`generate_explanations.py` (до цього фіксу) — цього поля там нема, і скрипт
+сам це виявить та скаже, що робити:
+```bash
+rm data/churn_explanations.json
+make -f Makefile.theme9 setup-data
+```
+`ground_truth` тут — не відповідь LLM, а детермінований (безкоштовний,
+без API-виклику) шаблон на основі бізнес-правил із тих самих структурованих
+даних клієнта (тип контракту, тариф, стаж тощо) — стенд-ін для того, що в
+реальному проєкті писала б людина-експерт (CRM-менеджер).
+
+### RAGAS питає про OpenAI / падає з `AuthenticationError`
+Перевір `.env.theme9`: `LLM_PROVIDER` має відповідати заповненому ключу.
+`make -f Makefile.theme9 check-env` покаже, чого не вистачає.
+
+### `InconsistentVersionWarning` при завантаженні `churn_model.pkl`
+
+```
+Trying to unpickle estimator ... from version 1.7.2 when using version 1.5.2
+```
+
+`docker/Dockerfile.labs` пінує `scikit-learn==1.7.2` — саме версію, з якою
+студенти реально тренують модель локально (`pipelines/train.py`). Якщо
+все одно бачиш це попередження — версія scikit-learn на твоїй машині
+відрізняється від 1.7.2. Дізнайся свою версію (`pip show scikit-learn`)
+і заміни цифру в `docker/Dockerfile.labs` (рядок `"scikit-learn==1.7.2"`)
+на свою — так контейнер лабораторних завжди читатиме pickle тим самим
+бінарним форматом, яким його записано, і попередження зникне повністю.
+
+Альтернативно — тренуй модель НЕ на своїй машині, а всередині самого
+контейнера лабораторних (`docker compose ... run --rm lab-a1 bash`,
+далі `python pipelines/train.py`), де версія вже гарантовано збігається
+з тим, що зашито в образ.
+
+⚠️ **Якщо ти ТАКОЖ використовуєш `Dockerfile.api`/`requirements-api.txt`
+з основного репо** (теми 7-8, продакшн-подібний сервінг моделі) — там
+scikit-learn і досі запінований на `1.5.2`. Якщо той сервіс вантажить
+цю саму модель (треновану під 1.7.2), онови пін і там теж — інакше
+побачиш те саме попередження вже в API-сервісі.
+
+Це попередження саме по собі рідко ламає результат (Lab A1 з таким
+warning'ом видав цілком коректні AUC=0.97 і збалансований precision/
+recall) — але усунути розбіжність версій **надійніше**, ніж покладатись
+на те, що конкретні класи (`OneHotEncoder`, `RandomForestClassifier`,
+...) залишаться бінарно сумісними між мінорними релізами scikit-learn
+і надалі.
+
+### `404 models/gemini-... is not found for API version v1beta`
+
+Google дуже часто вимикає старі моделі Gemini (усі 1.0, 1.5 і Gemini 2.0
+Flash/Flash-Lite вже офіційно вимкнені й повертають 404 на будь-який запит).
+`.env.theme9.example` пінує `GEMINI_MODEL=gemini-3.1-flash-lite` (безкоштовна,
+стабільна, актуальна на момент написання) — але якщо ти читаєш це через
+кілька місяців, ця модель теж може вже бути deprecated. Актуальний список:
+
+```bash
+curl "https://generativelanguage.googleapis.com/v1beta/models?key=$GOOGLE_API_KEY" \
+  | grep '"name"'
+```
+
+або офіційна сторінка https://ai.google.dev/gemini-api/docs/models — знайди
+там модель з поміткою "Free tier" і встав її ім'я (без префікса `models/`)
+у `GEMINI_MODEL` в `.env.theme9`.
+
+### `LLM_PROVIDER=ollama`, а лаба каже "модель ще не завантажена"
+
+```bash
+make -f Makefile.theme9 ollama-pull     # потрібен інтернет, один раз
+make -f Makefile.theme9 ollama-check    # має вивести ✅
+```
+
+### Прогрес-бар RAGAS стоїть на `0/200` і не рухається (довелось Ctrl+C)
+
+Це не "все зламалось" — імовірно один HTTP-запит завис (мережевий блип),
+а retry навіть не почався, бо запит формально ще не завершився помилкою.
+Вже виправлено:
+- на кожен LLM-клієнт (Anthropic/Gemini/Groq) додано явний `timeout`
+  (дефолт 60с, `LLM_REQUEST_TIMEOUT` в `.env.theme9`) — тепер запит
+  ГАРАНТОВАНО завершується помилкою за N секунд, а не висне назавжди;
+- `log_tenacity=True` + налаштоване логування в `lab_b1_ragas.py` — тепер
+  кожна повторна спроба RAGAS друкується в консоль (`[TENACITYRetry...]`),
+  а не відбувається мовчки, тож видно, що процес живий, просто повільний.
+
+Якщо після цього фіксу прогрес-бар все ще стоїть довше ~2 хвилин без
+жодного логу — це вже привід зупинити (Ctrl+C) і перевірити мережу.
+
+### `TypeError: generate_content() got an unexpected keyword argument 'temperature'`
+
+Реальний баг сумісності між `ragas==0.1.14` і `langchain-google-genai==1.0.10`:
+RAGAS завжди явно передає `temperature=` при кожному викликові judge-моделі,
+навіть коли вона вже має власний `temperature` з конструктора — а ця версія
+`langchain-google-genai` не прибирає цей дублікат перед тим, як переслати
+залишок kwargs прямо в низькорівневий Google-клієнт, який такого параметра
+не приймає. Вже виправлено в `ragas_backend.py` — тонкий підклас
+`ChatGoogleGenerativeAI`, який прибирає лише цей зайвий kwarg (саме
+значення temperature вже застосоване раніше, через `generation_config`,
+тож поведінка не змінюється, лише зникає крах). Якщо після оновлення
+патча ця помилка все ще з'являється — переконайся, що `docker build`
+реально підхопив новий `ragas_backend.py` (перезбери образ).
+
+### `429 ResourceExhausted` навіть після фіксу з temperature
+
+Дві окремі причини, обидві вже виправлені в `ragas_backend.py`:
+- `max_retries=0`, який передавався в конструктор `ChatGoogleGenerativeAI`,
+  **нічого не робив** — у джерелах `langchain_google_genai==1.0.10`
+  внутрішній retry-декоратор хардкодить `max_retries = 2` локально,
+  повністю ігноруючи це поле (підтверджений баг саме цієї версії пакета);
+- `max_workers=1` (get_run_config) лише серіалізує запити, але **не**
+  гарантує дотримання ліміту 15/хв — швидкі послідовні запити (1-2с
+  кожен) легко перевищують ліміт навіть без паралелізму.
+
+Тепер підклас `ChatGoogleGenerativeAI` у `ragas_backend.py` викликає
+той самий перевірений throttle (`_rate_limit_wait`), що і `llm_client.py`,
+безпосередньо перед кожним реальним запитом — незалежно від того,
+що робить (чи не робить) внутрішній retry бібліотеки.
+
+### RAGAS повільно / timeout
+```bash
+make -f Makefile.theme9 lab-b1-fast   # 10 прикладів замість 50
+```
+
+### MLflow healthcheck ніколи не стає healthy
+
+Використовується `python3 -c "import urllib.request; ..."` замість `curl`,
+бо офіційний образ `ghcr.io/mlflow/mlflow` не гарантовано містить `curl`.
+Якщо все ще падає:
+```bash
+docker compose -f docker-compose.yml up -d mlflow
+docker compose -f docker-compose.yml logs mlflow
+```
+
+### `docker build` тягне гігабайти nvidia-пакетів (CUDA)
+
+Вже виправлено в `docker/Dockerfile.labs`: перед основною установкою окремим
+кроком ставиться CPU-only `torch` з офіційного індексу PyTorch
+(`download.pytorch.org/whl/cpu`), тому `sentence-transformers` більше не
+підмінює його на GPU-версію з ~10 пакетами `nvidia-*`. Якщо в логах бачиш
+`WARNING: CPU-only torch index unreachable` — це не помилка, просто той домен
+заблокований у твоїй мережі, і білд автоматично відкотився до звичайного
+(важчого) шляху без переривання збірки.
+
+### `no space left on device` під час `docker build`
+
+Усі 7 лабораторних сервісів (`lab-setup`, `lab-a1`, `lab-a2`, `lab-a2-drift`,
+`lab-b1`, `lab-b1-fast`, `lab-b2`) тепер діляться **одним** image-тегом
+(`tc09-theme9-labs:latest` в `docker-compose.theme9.yml`) — раніше кожен мав
+власний тег, і Docker намагався експортувати 7 повних копій багатогігабайтного
+образу одночасно, вичерпуючи диск. Якщо все одно бракує місця:
+```bash
+docker builder prune -af   # чистить build-кеш (займає найбільше місця)
+docker image prune -af     # прибирає "висячі" образи від невдалих спроб
+```
+
+### `docker build` падає з `ReadTimeoutError` / `TimeoutError: read operation timed out`
+
+Це не помилка конфігурації — це тимчасовий обрив мережі під час завантаження
+великого файлу (xgboost ~224 МБ, torch, transformers, ...). Вже виправлено
+двома способами в `docker/Dockerfile.labs`:
+- `PIP_DEFAULT_TIMEOUT=180` / `PIP_RETRIES=10` — щедріший таймаут і більше
+  спроб для всіх `pip install` в образі;
+- кожен великий пакет — в **окремому** `RUN`-шарі, тож якщо один пакет впаде,
+  Docker кешує все, що встигло встановитись раніше, і не тягне все з нуля.
+
+Якщо все одно падає — просто запусти збірку ще раз, вона продовжить з місця
+обриву завдяки кешу шарів:
+```bash
+make -f Makefile.theme9 build
+```
+Якщо мережа настільки нестабільна, що це не допомагає — спробуй з іншої
+мережі/часу доби, або збільш `PIP_DEFAULT_TIMEOUT` ще більше вручну
+в `docker/Dockerfile.labs`.
 
 ---
 
-## Teardown
-```bash
-./k8s/scripts/teardown.sh           # remove namespace + all resources
-./k8s/scripts/teardown.sh --all     # also stop k3s service
-```
+## Часовий графік демо (довідка)
+
+| Час | Команда | Що показуємо |
+|-----|---------|-------------|
+| 0:04 | `make -f Makefile.theme9 lab-a1` | Threshold sweep у терміналі |
+| 0:10 | — | MLflow UI → метрики run |
+| 0:12 | — | http://localhost:8888/lab_a1_results.png |
+| 0:15 | `make -f Makefile.theme9 lab-a2` | "Model healthy" |
+| 0:17 | `make -f Makefile.theme9 lab-a2-drift` | Деградація → trigger |
+| 0:35 | `make -f Makefile.theme9 lab-b1` | RAGAS eval + worst cases |
+| 0:43 | — | Gate: passed / failed |
+| 0:45 | — | http://localhost:8888/lab_b1_ragas_results.png |
+| 0:48 | `make -f Makefile.theme9 lab-b2` | LLM-judge рядок за рядком |
+| 0:58 | — | http://localhost:8888/lab_b2_judge_results.png |
 
 ---
 
-## Notes
-
-- `imagePullPolicy: IfNotPresent` must be set on all deployments so k3s uses
-  locally imported images without a registry.
-- The agent and RAG services work without an OpenAI key — rule-based fallback
-  and default ChromaDB embeddings are used respectively.
-- Secrets in `k8s/base/secrets.yaml` contain placeholder values only.
-  Always use `kubectl create secret` or a secrets manager in production.
-- After every `docker build`, re-run `docker save | sudo k3s ctr images import -`.
-  k3s **cannot** see Docker images automatically.
-
-## Monitoring
-Scripts in monitoring/ handle data/concept drift detection, A/B testing, and shadow datasets. Integrate with MLflow for comparing model versions.
-
-## License
-MIT License. See LICENSE for details.
-
-dvc.yaml: DVC pipeline definitions.
-
-Makefile: Convenience commands for setup, generation, training, and more.
-
-requirements-*.txt: Python dependencies for base, API, dev, and ML.
-
-## ML Training
-Запустіть `make train` для тренування моделі churn prediction.
-
-## Deployment
-Використовуйте Kubernetes manifests в deployment/ для production.
-
-## Monitoring
-Скрипти для дріфту в monitoring/.
+*Тема 9 · Modern MLOps / LLMOps / AgentOps in Production*
